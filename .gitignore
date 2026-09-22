@@ -1,0 +1,7 @@
+.env
+*.pdf
+*.log
+n8n_data/
+__pycache__/
+*.pyc
+.vscode/

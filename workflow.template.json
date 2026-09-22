@@ -1,0 +1,35 @@
+{
+  "name": "CV and Cover Letter Generator - Public Template",
+  "nodes": [
+    {"parameters":{"rule":{"interval":[{"field":"seconds","secondsInterval":15}]}},"type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.4,"position":[96,16],"id":"schedule-trigger","name":"Schedule Trigger"},
+    {"parameters":{"jsCode":"const staticData = $getWorkflowStaticData('global');\nreturn [{ json: { offset: staticData.lastOffset || 0 } }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[320,16],"id":"read-offset","name":"Read Telegram Offset"},
+    {"parameters":{"url":"=https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates","sendQuery":true,"queryParameters":{"parameters":[{"name":"offset","value":"={{ $json.offset }}"}]}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.5,"position":[560,16],"id":"telegram-updates","name":"Get Telegram Updates"},
+    {"parameters":{"jsCode":"const staticData = $getWorkflowStaticData('global');\nconst updates = $input.first().json.result || [];\nif (!updates.length) return [];\nstaticData.lastOffset = Math.max(...updates.map(update => update.update_id)) + 1;\nreturn updates.filter(update => (update.message?.text || '').trim().length > 20).map(update => ({ json: update }));"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[800,16],"id":"filter-messages","name":"Filter Job Offers"},
+    {"parameters":{"operation":"sendMessage","chatId":"={{ $json.message.chat.id }}","text":"Je traite cette offre...","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1040,16],"id":"acknowledge-message","name":"Acknowledge Message"},
+    {"parameters":{"modelId":{"__rl":true,"value":"models/gemini-1.5-flash","mode":"list"},"messages":{"values":[{"content":"=Adapt this resume to the job offer below. Use only the candidate profile supplied by the user; never invent facts or metrics. Return valid JSON matching the API fields.\n\nJOB OFFER:\n{{ $('Filter Job Offers').item.json.message.text }}\n\nCANDIDATE PROFILE (replace YOUR_CANDIDATE_PROFILE before use):\nYOUR_CANDIDATE_PROFILE"}]},"builtInTools":{},"options":{}},"type":"@n8n/n8n-nodes-langchain.googleGemini","typeVersion":1.2,"position":[1040,272],"id":"generate-resume","name":"Generate Resume JSON"},
+    {"parameters":{"jsCode":"let text = $input.first()?.json?.content?.parts?.[0]?.text || $input.first()?.json?.text || '';\ntext = text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();\nconst match = text.match(/\\{[\\s\\S]*\\}/);\nif (match) text = match[0];\nreturn [{ json: JSON.parse(text) }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[1280,272],"id":"parse-resume","name":"Parse Resume JSON"},
+    {"parameters":{"method":"POST","url":"http://xelatex-api:8000/compile-resume","sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify($json) }}","options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.5,"position":[1520,272],"id":"compile-resume","name":"Compile Resume PDF"},
+    {"parameters":{"operation":"sendDocument","chatId":"={{ $('Filter Job Offers').item.json.message.chat.id }}","binaryData":true,"binaryPropertyName":"data","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1760,272],"id":"send-resume","name":"Send Resume PDF"},
+    {"parameters":{"modelId":{"__rl":true,"value":"models/gemini-1.5-flash","mode":"list"},"messages":{"values":[{"content":"=Write a concise, factual cover letter for this job offer. Use only the candidate profile supplied by the user; never invent facts or metrics. Return valid JSON with COMPANY_NAME, JOB_TITLE, RECIPIENT_NAME, PARAGRAPH_HOOK, PARAGRAPH_VALUE, PARAGRAPH_ALIGNMENT and PARAGRAPH_CTA.\n\nJOB OFFER:\n{{ $('Filter Job Offers').item.json.message.text }}\n\nCANDIDATE PROFILE (replace YOUR_CANDIDATE_PROFILE before use):\nYOUR_CANDIDATE_PROFILE"}]},"builtInTools":{},"options":{}},"type":"@n8n/n8n-nodes-langchain.googleGemini","typeVersion":1.2,"position":[2000,272],"id":"generate-letter","name":"Generate Cover Letter JSON"},
+    {"parameters":{"jsCode":"let text = $input.first()?.json?.content?.parts?.[0]?.text || $input.first()?.json?.text || '';\ntext = text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();\nconst match = text.match(/\\{[\\s\\S]*\\}/);\nif (match) text = match[0];\nreturn [{ json: JSON.parse(text) }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[2240,272],"id":"parse-letter","name":"Parse Cover Letter JSON"},
+    {"parameters":{"method":"POST","url":"http://xelatex-api:8000/compile-cover-letter","sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify($json) }}","options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.5,"position":[2480,272],"id":"compile-letter","name":"Compile Cover Letter PDF"},
+    {"parameters":{"operation":"sendDocument","chatId":"={{ $('Filter Job Offers').item.json.message.chat.id }}","binaryData":true,"binaryPropertyName":"data","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[2720,272],"id":"send-letter","name":"Send Cover Letter PDF"}
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger":{"main":[[{"node":"Read Telegram Offset","type":"main","index":0}]]},
+    "Read Telegram Offset":{"main":[[{"node":"Get Telegram Updates","type":"main","index":0}]]},
+    "Get Telegram Updates":{"main":[[{"node":"Filter Job Offers","type":"main","index":0}]]},
+    "Filter Job Offers":{"main":[[{"node":"Acknowledge Message","type":"main","index":0},{"node":"Generate Resume JSON","type":"main","index":0}]]},
+    "Generate Resume JSON":{"main":[[{"node":"Parse Resume JSON","type":"main","index":0}]]},
+    "Parse Resume JSON":{"main":[[{"node":"Compile Resume PDF","type":"main","index":0}]]},
+    "Compile Resume PDF":{"main":[[{"node":"Send Resume PDF","type":"main","index":0}]]},
+    "Send Resume PDF":{"main":[[{"node":"Generate Cover Letter JSON","type":"main","index":0}]]},
+    "Generate Cover Letter JSON":{"main":[[{"node":"Parse Cover Letter JSON","type":"main","index":0}]]},
+    "Parse Cover Letter JSON":{"main":[[{"node":"Compile Cover Letter PDF","type":"main","index":0}]]},
+    "Compile Cover Letter PDF":{"main":[[{"node":"Send Cover Letter PDF","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder":"v1","binaryMode":"separate"},
+  "tags": []
+}
