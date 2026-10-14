@@ -7,6 +7,9 @@ import type { Contact } from './types';
 const CONTACT_KEYS: (keyof Contact)[] = ['name', 'email', 'phone', 'location', 'github', 'linkedin'];
 
 export function readProfile(): { contact: Contact; text: string } {
+  if (!fs.existsSync(PROFILE_FILE)) {
+    throw new Error('prompts/profile.md is missing: cp prompts/profile.example.md prompts/profile.md, then fill it in.');
+  }
   const raw = fs.readFileSync(PROFILE_FILE, 'utf8').replace(/\r\n/g, '\n');
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   const contact: Contact = {};

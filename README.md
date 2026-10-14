@@ -70,7 +70,8 @@ For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → p
 ├── docker-compose.yml
 ├── .env.example             settings template → copy to .env
 ├── prompts/                 ✏️ YOUR files — edits apply on the next offer
-│   ├── profile.md           you: contact block at the top + your real profile (plain text)
+│   ├── profile.md           you: contact block at the top + your real profile (git-ignored)
+│   ├── profile.example.md   template to start from
 │   └── prompts.ts           settings + all the prompts, shared by the three engines
 ├── app/                     web page + pipeline (TypeScript, run with tsx)
 │   ├── src/
@@ -104,6 +105,7 @@ For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → p
 
 ```bash
 cp .env.example .env
+cp prompts/profile.example.md prompts/profile.md
 ```
 
 Fill in `.env` (only keys and technical settings):
@@ -258,4 +260,4 @@ This is the style of the CV that got interviews. The font size is chosen automat
 - **Claude Pro limits are shared** with your normal Claude use. Each offer = 2 generations.
 - **Never set `ANTHROPIC_API_KEY`**: you would be billed API prices.
 - **The page is private**: it only listens on this PC (`127.0.0.1:8080`). Don't expose it — it uses your personal subscription and keys.
-- **You** are in `prompts/profile.md`, the **machine** settings and keys in `.env` (git-ignored). Remove the profile before publishing the repo.
+- **You** are in `prompts/profile.md`, the **machine** settings and keys in `.env`. Both are git-ignored: they never leave your PC.

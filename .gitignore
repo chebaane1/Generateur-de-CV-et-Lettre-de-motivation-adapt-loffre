@@ -6,4 +6,4 @@ __pycache__/
 .vscode/
 node_modules/
 data/
-prompts/*
+prompts/profile.md
