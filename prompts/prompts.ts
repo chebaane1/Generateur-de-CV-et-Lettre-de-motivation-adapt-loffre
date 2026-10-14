@@ -1,16 +1,21 @@
-// Prompts shared by the three bots (Claude, Gemini, local).
-// Loaded by claude-bridge and re-read on every offer: edit, save, generate. No restart needed.
-const fs = require('fs');
-const path = require('path');
+// Prompts shared by the three engines (Claude, Gemini, local).
+// Loaded by the app and re-read on every offer: edit, save, generate. No restart needed.
+import fs from 'node:fs';
+import path from 'node:path';
+
+type Engine = 'claude' | 'gemini' | 'local';
+type Tailoring = 'aggressive' | 'strict';
+interface Repo { name: string; tags: string; about: string; url: string }
+interface GithubRepo { name: string; fork: boolean; language: string | null; topics?: string[]; description: string | null; html_url: string; default_branch: string }
 
 // ===== SETTINGS =====
 
 // 'aggressive': job titles and tasks are rewritten to match the offer (companies, dates, education stay real)
 // 'strict'    : only selects and rephrases what is in the profile
-const TAILORING = 'aggressive';
+const TAILORING: Tailoring = 'aggressive';
 
-// Model per bot. Gemini's model is chosen in the Gemini workflow nodes.
-const MODELS = {
+// Model per engine
+const MODELS: Record<Engine, string> = {
   claude: 'sonnet',                                  // 'sonnet' or 'haiku' (lighter on your Pro limits)
   gemini: process.env.GEMINI_MODEL || 'gemini-3.6-flash', // set GEMINI_MODEL in .env (fallback: GEMINI_FALLBACK_MODEL)
   local: process.env.OLLAMA_MODEL || 'qwen2.5:3b'    // set OLLAMA_MODEL in .env
@@ -41,13 +46,13 @@ const PROJECTS_COUNT = '2-3';
 // --- GitHub projects -------------------------------------------------------
 // The repo list comes from the GitHub API (1 request); README excerpts come from raw.githubusercontent.com,
 // which is not rate-limited like the API. Set GITHUB_TOKEN in .env to raise the API limit if needed.
-const GH_HEADERS = {
+const GH_HEADERS: Record<string, string> = {
   'User-Agent': 'cv-generator',
   ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
 };
 
 // Markdown README -> a short plain-text excerpt
-function readmeExcerpt(md, max = 350) {
+function readmeExcerpt(md: string, max = 350): string {
   return md
     .replace(/```[\s\S]*?```/g, ' ')            // code blocks
     .replace(/<[^>]+>/g, ' ')                   // HTML tags
@@ -59,7 +64,7 @@ function readmeExcerpt(md, max = 350) {
     .slice(0, max);
 }
 
-async function fetchReadme(repo) {
+async function fetchReadme(repo: GithubRepo): Promise<string> {
   for (const name of ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README']) {
     try {
       const res = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${repo.name}/${repo.default_branch}/${name}`,
@@ -70,37 +75,39 @@ async function fetchReadme(repo) {
   return '';
 }
 
-// Returns [{ name, tags, about, url }]. Kept on globalThis because this file is re-loaded on every offer
-async function githubProjects() {
+// Kept on globalThis because this file is re-loaded on every offer
+const store = globalThis as typeof globalThis & { __githubCache?: { user: string; at: number; repos: Repo[] } };
+
+async function githubProjects(): Promise<Repo[]> {
   if (!GITHUB_USER) return [];
-  const cache = globalThis.__githubCache;
+  const cache = store.__githubCache;
   if (cache && cache.user === GITHUB_USER && Date.now() - cache.at < GITHUB_CACHE_HOURS * 3600e3) return cache.repos;
   try {
     const res = await fetch(`https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=pushed`,
       { headers: GH_HEADERS, signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const repos = (await res.json()).filter(r => !r.fork && r.name.toLowerCase() !== GITHUB_USER.toLowerCase());
-    const list = await Promise.all(repos.map(async r => ({
+    const repos = ((await res.json()) as GithubRepo[]).filter(r => !r.fork && r.name.toLowerCase() !== GITHUB_USER.toLowerCase());
+    const list: Repo[] = await Promise.all(repos.map(async r => ({
       name: r.name,
       tags: [r.language, ...(r.topics || [])].filter(Boolean).join(', '),
       about: r.description || await fetchReadme(r),
       url: r.html_url
     })));
-    globalThis.__githubCache = { user: GITHUB_USER, at: Date.now(), repos: list };
+    store.__githubCache = { user: GITHUB_USER, at: Date.now(), repos: list };
     console.log(`github: ${list.length} repos loaded for ${GITHUB_USER}`);
     return list;
   } catch (e) {
-    console.error('github: could not load repos:', e.message);
+    console.error('github: could not load repos:', e instanceof Error ? e.message : e);
     return cache ? cache.repos : [];   // keep the last good list, or go on without GitHub projects
   }
 }
 
 // One line per repo; the local model gets shorter excerpts to fit its small context window
-const formatRepos = (repos, max) => repos
+const formatRepos = (repos: Repo[], max: number): string => repos
   .map(r => `- ${r.name}${r.tags ? ` (${r.tags})` : ''}: ${(r.about || 'no description').slice(0, max)} | ${r.url}`)
   .join('\n');
 
-// Must match what http://xelatex-api:8000/compile-resume expects (ATS_* keys are only used for the Telegram report)
+// Must match what the PDF service (pdf/app/resume.py) expects. ATS_* and TECH_KEYWORDS: report and bold technologies
 const RESUME_SCHEMA = {
   SECTION_LANG: '"en" or "fr" (language of the offer)',
   HEADLINE: '<headline intro> | <job title from the offer> | <1-2 key domains of the offer>',
@@ -117,14 +124,14 @@ const RESUME_SCHEMA = {
   ATS_ADDED: ['title, task or skill written in the resume that is NOT in the candidate profile']
 };
 
-// Must match what http://xelatex-api:8000/compile-cover-letter expects
+// Must match what the PDF service (pdf/app/letter.py) expects
 const LETTER_SCHEMA = {
   COMPANY_NAME: '', JOB_TITLE: 'exactly as written in the offer', RECIPIENT_NAME: 'use "Madame, Monsieur" / "Hiring Manager" if unknown',
   PARAGRAPH_HOOK: '', PARAGRAPH_VALUE: '', PARAGRAPH_ALIGNMENT: '', PARAGRAPH_CTA: ''
 };
 
 // tailoring: chosen on the web page per offer; TAILORING above is the default
-async function buildPrompts({ jobOffer, engine, tailoring }) {
+export async function buildPrompts({ jobOffer, engine, tailoring }: { jobOffer: string; engine: Engine; tailoring?: Tailoring }) {
   const profile = fs.readFileSync(PROFILE_FILE, 'utf8').trim();
   const repos = formatRepos(await githubProjects(), engine === 'local' ? 120 : 350);
   if (!profile) throw new Error('prompts/profile.md is empty: paste your profile in it.');
@@ -218,7 +225,7 @@ ${JSON.stringify(RESUME_SCHEMA, null, 2)}`;
 Return JSON with EXACTLY these keys:
 ${JSON.stringify(LETTER_SCHEMA, null, 2)}`;
 
-  const userContent = (task, extra = '') =>
+  const userContent = (task: string, extra = '') =>
     `<job_offer>\n${jobOffer}\n</job_offer>\n\n<candidate_profile>\n${profile}\n</candidate_profile>\n\n${extra}${task}`;
   const githubBlock = repos ? `<github_projects>\n${repos}\n</github_projects>\n\n` : '';
 
@@ -228,4 +235,3 @@ ${JSON.stringify(LETTER_SCHEMA, null, 2)}`;
   };
 }
 
-module.exports = { buildPrompts };

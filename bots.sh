@@ -12,11 +12,12 @@ want=" $* "
 [[ $want == *" all "* ]] && want=" claude gemini local "
 
 # the web page only offers the engines launched here (read on every request, no restart needed)
+mkdir -p data
 engines=$(for b in claude gemini local; do if [[ $want == *" $b "* ]]; then printf '"%s",' "$b"; fi; done)
-echo "[${engines%,}]" > web/engines.json
+echo "[${engines%,}]" > data/engines.json
 
-# claude-bridge (web page + all the logic) and xelatex-api (PDFs) always run; ollama only for the local model
-services="xelatex-api claude-bridge"
+# app (web page + pipeline) and pdf always run; ollama only for the local model
+services="app pdf"
 [[ $want == *" local "* ]] && services="$services ollama"
 docker-compose up -d $services
 
