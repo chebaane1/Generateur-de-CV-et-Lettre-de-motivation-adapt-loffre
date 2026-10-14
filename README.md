@@ -38,25 +38,24 @@ You choose which ones run with `./bots.sh` (below). The page only offers those.
 ## How it works
 
 ```
-web page ──► claude-bridge ──► n8n workflow (Webhook) ──► AI engine ──► xelatex-api ──► PDFs ──► web page
-                                                          │
-                                                          ├─ Claude  (Claude Code, via the bridge)
-                                                          ├─ Gemini  (API, via the bridge)
-                                                          └─ ollama  (local model)
+web page ──► claude-bridge ──► AI engine ──► xelatex-api ──► PDFs ──► web page
+                                │
+                                ├─ Claude  (Claude Code, inside the bridge)
+                                ├─ Gemini  (API)
+                                └─ ollama  (local model container)
 ```
 
 **The containers** (`docker-compose.yml`):
 
-- **claude-bridge** — the hub (`claude-bridge/server.js`), on http://localhost:8080 (this PC only):
-  - serves the **web page** (`web/index.html`) and sends each request to the right n8n workflow
-  - serves the **shared prompts** (`prompts/`) and calls **Claude** (your Pro login) and **Gemini** (`GEMINI_API_KEY`)
+- **claude-bridge** — the app (`claude-bridge/server.js`), on http://localhost:8080 (this PC only):
+  - serves the **web page** (`web/index.html`)
+  - runs the whole pipeline with the **shared prompts** (`prompts/`), calling **Claude** (your Pro login), **Gemini** (`GEMINI_API_KEY`) or **ollama**
   - must always run, whatever the engine
-- **n8n** — runs one workflow per engine (http://localhost:5678)
 - **xelatex-api** — turns the JSON into PDFs (`main.py`)
 - **ollama** — the local model (downloads `qwen2.5:3b`, ~2 GB, on first start)
 
-Each workflow: `Webhook → Build Prompts → AI (CV) → Parse → Compile PDF → AI (letter) → Parse → Compile PDF → Respond`.
-Any failing step answers the page with the error instead.
+For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → page`.
+If a step fails, the page shows which one and why.
 
 ---
 
@@ -68,9 +67,9 @@ Any failing step answers the page with the error instead.
 | `web/index.html` | the web page |
 | `prompts/profile.md` | **your profile** (plain text) |
 | `prompts/prompts.js` | **all the prompts and settings**, shared by the three engines |
-| `claude-bridge/` | the bridge: web page, prompts, Claude and Gemini calls |
+| `claude-bridge/` | the app: web page, pipeline, Claude / Gemini / ollama calls |
 | `main.py`, `Dockerfile` | the PDF compiler (LaTeX) |
-| `cv-cover-letter-*.json` | the three n8n workflows (one per engine) |
+| `n8n-legacy/` | the old n8n workflows (archived, not used) |
 | `docker-compose.yml` | all the containers |
 | `.env.example` | settings template → copy to `.env` |
 
@@ -100,18 +99,12 @@ Put your profile in `prompts/profile.md`.
 ### 2. Build
 
 ```bash
-docker volume create n8n_data
 docker-compose up -d --build
 ```
 
 > First start: `ollama` downloads its model (~2 GB) in the background. Follow it with `docker-compose logs -f ollama`.
 
-### 3. Import the workflows into n8n
-
-Open http://localhost:5678 → **Import from file** → import the three `cv-cover-letter-*.json`.
-No credential to set: Claude and Gemini go through the bridge, keys come from `.env`.
-
-### 4. Launch
+### 3. Launch
 
 ```bash
 ./bots.sh all        # or: ./bots.sh claude gemini
@@ -125,7 +118,7 @@ Open **http://localhost:8080**.
 
 ### Start with the engines you want
 
-`bots.sh` starts the containers the chosen engines need, turns their workflows **on** in n8n, the others **off**, and tells the page which engines to offer:
+`bots.sh` starts the containers the chosen engines need and tells the page which engines to offer:
 
 | I want | Command |
 |---|---|
@@ -145,7 +138,7 @@ Then open **http://localhost:8080**, paste the offer, **Generate**.
 
 | Do | Command |
 |---|---|
-| Follow the logs | `docker-compose logs -f claude-bridge n8n` |
+| Follow the logs | `docker-compose logs -f claude-bridge` |
 | After changing `main.py` or `claude-bridge/server.js` | `docker-compose up -d --build` |
 | After changing `.env` | `docker-compose up -d` |
 | After editing `prompts/` or `web/index.html` | nothing, it applies on the next offer / page refresh |
@@ -158,11 +151,10 @@ Idle (nothing being generated), measured:
 
 | Container | RAM |
 |---|---|
-| n8n | ~330 MB |
-| ollama (model not loaded) | ~190 MB |
-| xelatex-api | ~16 MB |
-| claude-bridge | ~13 MB |
-| **Total** | **~550 MB** |
+| claude-bridge | ~65 MB |
+| xelatex-api | ~25 MB |
+| ollama (only with `local`, model not loaded) | ~190 MB |
+| **Total** | **~90 MB** (~280 MB with `local`) |
 
 While generating, on top of that (estimates):
 
@@ -205,7 +197,7 @@ Below the settings: `system` (general rules), `experienceRules`, `resumeTask` (t
 This is the style of the CV that got interviews. The font size is chosen automatically (9 → 12.5 pt) so the content **fills exactly one page**.
 After editing `main.py`: `docker-compose up -d --build xelatex-api`.
 
-**Changed a workflow in n8n?** Export it (**⋯ → Download**) over its `cv-cover-letter-*.json` to keep the repo in sync.
+**The pipeline itself** — `generate()` in `claude-bridge/server.js`. After editing: `docker-compose up -d --build claude-bridge`.
 
 ---
 
@@ -214,7 +206,7 @@ After editing `main.py`: `docker-compose up -d --build xelatex-api`.
 | Problem | Fix |
 |---|---|
 | Page: *engine "x" is not launched* | Launch it: `./bots.sh x` (or `./bots.sh all`) |
-| Page: *workflow is not active in n8n* | Import the workflow (setup step 3), then `./bots.sh …` again |
+| Local: *the ollama container is not running* | `./bots.sh local` (or `./bots.sh all`) |
 | ❌ *Build Prompts* | Syntax error in `prompts/prompts.js`, or `prompts/profile.md` is empty |
 | Gemini: *"high demand"* / HTTP 503 | Google is overloaded (common on free keys). The fallback model is tried automatically; otherwise retry later |
 | Gemini: *GEMINI_API_KEY is not set* | Add it to `.env`, then `docker-compose up -d` |

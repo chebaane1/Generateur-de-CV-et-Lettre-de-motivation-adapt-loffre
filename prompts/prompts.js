@@ -1,5 +1,5 @@
 // Prompts shared by the three bots (Claude, Gemini, local).
-// Served by claude-bridge at POST /prompts and re-read on every offer: edit, save, send an offer. No restart needed.
+// Loaded by claude-bridge and re-read on every offer: edit, save, generate. No restart needed.
 const fs = require('fs');
 const path = require('path');
 

@@ -36,6 +36,12 @@
   .history ul { list-style:none; margin:0; padding:0; }
   .history li { padding:7px 0; border-top:1px solid var(--line); font-size:13px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
   .history li:hover { color:var(--accent); }
+  #editor { max-height:78vh; overflow:auto; padding-right:6px; }
+  #editor fieldset { border:1px solid var(--line); border-radius:8px; margin:10px 0; padding:4px 12px 10px; }
+  #editor legend { font-size:12px; font-weight:600; color:var(--muted); padding:0 4px; }
+  #editor textarea { height:auto; min-height:38px; }
+  .edit-bar { display:flex; gap:8px; position:sticky; bottom:0; background:var(--card); padding:10px 0 2px; }
+  .edit-bar .primary { width:auto; margin:0; }
   .history small { color:var(--muted); white-space:nowrap; }
 </style>
 </head>
@@ -77,8 +83,16 @@
         <button data-tab="letter">Cover letter</button>
         <button data-tab="ats">ATS report</button>
         <a class="dl" id="dl">Download</a>
+        <button id="editBtn">Edit</button>
       </div>
       <iframe id="pdf" title="PDF preview"></iframe>
+      <form id="editor" hidden>
+        <div id="fields"></div>
+        <div class="edit-bar">
+          <button type="submit" class="primary" id="saveBtn">Update PDF</button>
+          <button type="button" id="cancelBtn">Cancel</button>
+        </div>
+      </form>
       <pre id="ats" hidden></pre>
     </div>
   </section>
@@ -133,7 +147,11 @@ function setTab(t) {
   tab = t;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   const isPdf = t !== 'ats';
-  $('pdf').hidden = !isPdf; $('ats').hidden = isPdf; $('dl').hidden = !isPdf;
+  $('editor').hidden = true;
+  $('pdf').hidden = !isPdf; $('ats').hidden = isPdf; $('dl').hidden = !isPdf; $('editBtn').hidden = !isPdf;
+  const content = current[t === 'cv' ? 'resume' : 'letter'];
+  $('editBtn').disabled = isPdf && !content;
+  $('editBtn').title = content ? 'Edit the text, then rebuild the PDF' : 'Not editable (generated before this feature)';
   if (isPdf) {
     $('pdf').src = urls[t];
     const company = plain(current.company).replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'offer';
@@ -183,6 +201,70 @@ async function generate() {
   }
 }
 
+// ---- Editor: the content behind the PDF as a form, then rebuild the PDF (no AI call) ----
+const HIDDEN = /^(ATS_|TECH_KEYWORDS$|SECTION_LANG$|LETTER_LANG$)/;   // internal fields, not shown
+const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const human = k => /[a-z]/.test(k) && /[A-Z]/.test(k[0]) && k.includes(' ') ? k
+  : k.replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase());
+const rows = text => Math.min(12, Math.max(1, Math.ceil(String(text).length / 90) + String(text).split('\n').length - 1));
+
+function field(path, value, label) {
+  const attr = `data-path="${esc(JSON.stringify(path))}"`;
+  if (value === null || typeof value !== 'object')
+    return `<label>${esc(label)}</label><textarea ${attr} data-type="text" rows="${rows(plain(value))}">${esc(plain(value))}</textarea>`;
+  if (Array.isArray(value) && value.every(v => v === null || typeof v !== 'object')) {
+    const text = value.map(plain).join('\n');
+    return `<label>${esc(label)} <small>(one per line)</small></label><textarea ${attr} data-type="lines" rows="${rows(text) + 1}">${esc(text)}</textarea>`;
+  }
+  if (Array.isArray(value))
+    return value.map((v, i) => `<fieldset><legend>${esc(label)} ${i + 1}</legend>${fields(v, [...path, i])}</fieldset>`).join('');
+  return `<fieldset><legend>${esc(label)}</legend>${fields(value, path)}</fieldset>`;
+}
+function fields(obj, path = []) {
+  return Object.entries(obj).filter(([k]) => path.length || !HIDDEN.test(k)).map(([k, v]) => field([...path, k], v, human(k))).join('');
+}
+
+function openEditor() {
+  const content = current[tab === 'cv' ? 'resume' : 'letter'];
+  if (!content) return;
+  $('fields').innerHTML = fields(content);
+  $('pdf').hidden = true; $('editor').hidden = false;
+}
+
+async function saveEditor(ev) {
+  ev.preventDefault();
+  const key = tab === 'cv' ? 'resume' : 'letter';
+  const content = JSON.parse(JSON.stringify(current[key]));
+  $('fields').querySelectorAll('textarea').forEach(el => {
+    const path = JSON.parse(el.dataset.path), last = path.pop();
+    const target = path.reduce((o, k) => o[k], content);
+    target[last] = el.dataset.type === 'lines' ? el.value.split('\n').map(x => x.trim()).filter(Boolean) : el.value.trim();
+  });
+  $('saveBtn').disabled = true; setStatus('Rebuilding the PDF…');
+  try {
+    const res = await (await fetch('/api/compile', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: key, content })
+    })).json();
+    if (!res.ok) throw new Error(res.error || 'compile failed');
+    current[key] = content;
+    current[key === 'resume' ? 'resumePdf' : 'letterPdf'] = res.pdf;
+    if (key === 'resume') current.headline = content.HEADLINE;
+    else { current.company = content.COMPANY_NAME; current.jobTitle = content.JOB_TITLE; }
+    store.set(store.get().map(e => (e.date === current.date ? current : e)));   // keep the edit in the history
+    renderHistory();
+    const t = tab; show(current); setTab(t);
+    setStatus('PDF updated.', 'ok');
+  } catch (e) {
+    setStatus('❌ ' + e.message, 'err');
+  } finally {
+    $('saveBtn').disabled = false;
+  }
+}
+
+$('editBtn').onclick = openEditor;
+$('cancelBtn').onclick = () => setTab(tab);
+$('editor').onsubmit = saveEditor;
 $('go').onclick = generate;
 document.querySelectorAll('.tabs button').forEach(b => (b.onclick = () => setTab(b.dataset.tab)));
 loadEngines();

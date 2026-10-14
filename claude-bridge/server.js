@@ -1,7 +1,9 @@
-// Tiny bridge: accepts a Messages-API-style request from n8n, runs Claude Code
-// headless (logged in with your Pro plan) and returns a Messages-API-style reply.
-// Also serves the web page (GET /), runs the n8n workflow chosen on it (POST /api/generate)
-// and calls Gemini with GEMINI_API_KEY from .env (POST /gemini/v1/messages).
+// The app's backend:
+//   GET  /              the web page (web/index.html)
+//   GET  /api/engines   engines launched with ./bots.sh (web/engines.json)
+//   POST /api/generate  {engine, jobOffer, tailoring} -> prompts -> AI (CV) -> PDF -> AI (letter) -> PDF
+// AI engines: Claude Code headless (your Pro plan), Gemini API (GEMINI_API_KEY), Ollama (local model).
+// PDFs: xelatex-api (main.py).
 const http = require('http');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -11,23 +13,18 @@ const DEFAULT_MODEL = process.env.CLAUDE_MODEL || 'sonnet';
 const TIMEOUT_MS = 5 * 60 * 1000;
 const PROMPTS_FILE = process.env.PROMPTS_FILE || '/prompts/prompts.js'; // ./prompts mounted by docker-compose
 const WEB_DIR = process.env.WEB_DIR || '/web';                           // ./web mounted by docker-compose
-const N8N_URL = process.env.N8N_URL || 'http://n8n:5678';
-const GENERATE_TIMEOUT_MS = 40 * 60 * 1000;                              // the local model is slow on CPU
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
+const XELATEX_URL = process.env.XELATEX_URL || 'http://xelatex-api:8000';
+const LOCAL_TIMEOUT_MS = 30 * 60 * 1000;                                 // the local model is slow on CPU
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const GEMINI_FALLBACK = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite';
 const ENGINES = ['claude', 'gemini', 'local'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Run one request at a time so parallel executions don't burn through limits at once
+// Run one Claude request at a time so parallel generations don't burn through your Pro limits at once
 let queue = Promise.resolve();
 const serial = fn => (queue = queue.then(fn, fn));
-
-// Job locks (one per bot, ?key=claude / gemini / local): n8n takes one before reading Telegram and
-// releases it after both PDFs are sent, so each bot handles one offer at a time.
-// A lock expires on its own if a run crashes midway.
-const LOCK_TTL_MS = Number(process.env.LOCK_TTL_MS) || 30 * 60 * 1000;
-const locks = new Map(); // key -> expiry timestamp
 
 // Return clean, valid JSON text or throw
 function cleanJson(text) {
@@ -121,28 +118,89 @@ async function runGemini({ system, prompt, model }) {
   throw lastError;
 }
 
-// POST the offer to the n8n workflow of the chosen engine and wait for the PDFs.
-// Plain http (not fetch): generation can take longer than fetch's 5-minute header timeout.
-function runWorkflow(engine, payload) {
+// POST JSON to another container and parse the JSON answer.
+// Plain http (not fetch): the local model can take longer than fetch's 5-minute header timeout.
+function postJson(url, payload, timeout = TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
-    const req = http.request(`${N8N_URL}/webhook/cv-${engine}`, {
+    const req = http.request(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
-      timeout: GENERATE_TIMEOUT_MS
+      timeout
     }, res => {
       let out = '';
       res.on('data', c => (out += c));
       res.on('end', () => {
-        if (res.statusCode === 404) return reject(new Error(`the ${engine} workflow is not active in n8n (launch it with ./bots.sh ${engine})`));
-        try { resolve(JSON.parse(out)); }
-        catch { reject(new Error(`n8n answered ${res.statusCode}: ${out.slice(0, 300)}`)); }
+        let data;
+        try { data = JSON.parse(out); } catch { return reject(new Error(`HTTP ${res.statusCode}: ${out.slice(0, 300)}`)); }
+        if (res.statusCode >= 400) return reject(new Error(String(data.detail || data.error || `HTTP ${res.statusCode}`)));
+        resolve(data);
       });
     });
-    req.on('timeout', () => req.destroy(new Error('generation timed out')));
+    req.on('timeout', () => req.destroy(new Error('timed out')));
     req.on('error', reject);
     req.end(body);
   });
+}
+
+// Ollama (local model), JSON mode
+async function runOllama({ system, prompt, model }) {
+  const res = await postJson(`${OLLAMA_URL}/api/chat`, {
+    model, stream: false, format: 'json',
+    options: { num_ctx: 8192, num_predict: 4096, temperature: 0.3 },
+    messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }]
+  }, LOCAL_TIMEOUT_MS).catch(e => {
+    throw /ECONNREFUSED|ENOTFOUND|EAI_AGAIN/.test(e.message)
+      ? new Error('the ollama container is not running (./bots.sh local)') : e;
+  });
+  if (res.done_reason === 'length') throw new Error('the local model hit its max output tokens');
+  return res.message?.content || '';
+}
+
+const RUNNERS = { claude: runClaude, gemini: runGemini, local: runOllama };
+
+// Ask the engine for one JSON object (Claude requests are queued one at a time)
+async function askJson(engine, request) {
+  const args = { system: request.system, prompt: request.messages.map(m => m.content).join('\n\n'), model: request.model };
+  const job = () => generateJson(args, RUNNERS[engine]);
+  return JSON.parse(await (engine === 'claude' ? serial(job) : job()));
+}
+
+// Plain-text keyword report shown on the web page
+function atsReport(resume) {
+  const matched = resume.ATS_MATCHED || [], missing = resume.ATS_MISSING || [], added = resume.ATS_ADDED || [];
+  return [
+    `ATS keywords covered: ${matched.length}/${matched.length + missing.length}`,
+    missing.length ? `Not in your profile: ${missing.join(', ')}` : 'Every keyword of the offer is covered.',
+    added.length ? `\nAdded beyond your profile (prepare to talk about these in interviews):\n- ${added.join('\n- ')}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+// One offer -> tailored CV + cover letter PDFs. On failure, says which step failed.
+async function generate({ engine, jobOffer, tailoring }) {
+  let step = 'Prompts';
+  try {
+    delete require.cache[require.resolve(PROMPTS_FILE)];   // re-read: edits to prompts/ apply on the next offer
+    const { resumeRequest, letterRequest } = await require(PROMPTS_FILE).buildPrompts({ jobOffer, engine, tailoring });
+
+    step = 'CV (AI)';
+    const resume = await askJson(engine, resumeRequest);
+    resume.PROFILE_SUMMARY = resume.PROFILE_SUMMARY || resume.summary || '';
+    step = 'CV (PDF)';
+    const resumePdf = (await postJson(`${XELATEX_URL}/compile-resume?output=base64`, resume)).pdf;
+
+    step = 'Cover letter (AI)';
+    const letter = await askJson(engine, letterRequest);
+    step = 'Cover letter (PDF)';
+    const letterPdf = (await postJson(`${XELATEX_URL}/compile-cover-letter?output=base64`, letter)).pdf;
+
+    return { ok: true, engine, resumePdf, letterPdf, atsReport: atsReport(resume),
+             headline: resume.HEADLINE, company: letter.COMPANY_NAME, jobTitle: letter.JOB_TITLE,
+             resume, letter };   // the content, so the page can edit it and recompile
+  } catch (e) {
+    console.error(`generate failed at ${step}:`, e.message);
+    return { ok: false, step, error: e.message };
+  }
 }
 
 // Engines launched with ./bots.sh (it writes web/engines.json)
@@ -157,7 +215,6 @@ http.createServer((req, res) => {
     res.end(JSON.stringify(body));
   };
   const url = new URL(req.url, 'http://bridge');
-  const key = url.searchParams.get('key') || 'default';
   if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true });
   if (req.method === 'GET' && url.pathname === '/api/engines') return send(200, { engines: launchedEngines() });
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
@@ -168,17 +225,7 @@ http.createServer((req, res) => {
       res.end(html);
     });
   }
-  if (req.method === 'POST' && url.pathname === '/lock') {
-    if (Date.now() < (locks.get(key) || 0)) return send(200, { acquired: false });
-    locks.set(key, Date.now() + LOCK_TTL_MS);
-    return send(200, { acquired: true });
-  }
-  if (req.method === 'POST' && url.pathname === '/unlock') {
-    locks.delete(key);
-    return send(200, { released: true });
-  }
-  const routes = ['/v1/messages', '/gemini/v1/messages', '/prompts', '/api/generate'];
-  if (req.method !== 'POST' || !routes.includes(url.pathname)) return send(404, { error: 'not found' });
+  if (req.method !== 'POST' || !['/api/generate', '/api/compile'].includes(url.pathname)) return send(404, { error: 'not found' });
 
   let body = '';
   req.on('data', c => (body += c));
@@ -186,48 +233,18 @@ http.createServer((req, res) => {
     let data;
     try { data = JSON.parse(body); } catch { return send(400, { error: 'invalid JSON' }); }
 
-    // From the web page: run the chosen engine's n8n workflow, answer {ok, resumePdf, letterPdf, atsReport, …}
-    if (url.pathname === '/api/generate') {
-      const engine = data.engine;
-      if (!launchedEngines().includes(engine)) return send(200, { ok: false, error: `engine "${engine}" is not launched (./bots.sh ${engine})` });
-      if (!String(data.jobOffer || '').trim()) return send(200, { ok: false, error: 'paste a job offer first' });
-      console.log(`generate: ${engine}, ${data.tailoring}, ${String(data.jobOffer).length} chars`);
-      return runWorkflow(engine, { jobOffer: data.jobOffer, tailoring: data.tailoring })
-        .then(result => send(200, result))
-        .catch(e => { console.error('generate failed:', e.message); send(200, { ok: false, error: e.message }); });
+    // From the page's editor: rebuild one PDF from edited content (no AI call)
+    if (url.pathname === '/api/compile') {
+      const kind = data.kind === 'letter' ? 'cover-letter' : 'resume';
+      return postJson(`${XELATEX_URL}/compile-${kind}?output=base64`, data.content || {})
+        .then(r => send(200, { ok: true, pdf: r.pdf }))
+        .catch(e => send(200, { ok: false, error: e.message }));
     }
 
-    // Shared prompts for all bots, re-read on every call so edits apply without a restart
-    if (url.pathname === '/prompts') {
-      return Promise.resolve()
-        .then(() => {
-          delete require.cache[require.resolve(PROMPTS_FILE)];
-          return require(PROMPTS_FILE).buildPrompts(data);   // async: may fetch your GitHub projects
-        })
-        .then(prompts => send(200, { chatId: data.chatId, jobOffer: data.jobOffer, ...prompts }))
-        .catch(e => {
-          console.error('prompts failed:', e.message);
-          send(500, { error: 'prompts/prompts.js: ' + e.message });
-        });
-    }
-
-    const prompt = (data.messages || [])
-      .filter(m => m.role === 'user')
-      .map(m => typeof m.content === 'string' ? m.content
-        : (m.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n'))
-      .join('\n\n');
-    if (!prompt) return send(400, { error: 'no user message' });
-
-    const args = { system: data.system, prompt, model: data.model };
-    const job = url.pathname === '/gemini/v1/messages'
-      ? generateJson(args, runGemini)                                     // Gemini runs in parallel
-      : serial(data.expect_json === false ? () => runClaude(args) : () => generateJson(args));
-    job
-      .then(text => send(200, { content: [{ type: 'text', text }], stop_reason: 'end_turn' }))
-      .catch(e => {
-        console.error('request failed:', e.message);
-        const limited = /limit|rate|quota/i.test(e.message);
-        send(limited ? 429 : 502, { error: e.message });
-      });
+    const { engine, jobOffer, tailoring } = data;
+    if (!launchedEngines().includes(engine)) return send(200, { ok: false, error: `engine "${engine}" is not launched (./bots.sh ${engine})` });
+    if (!String(jobOffer || '').trim()) return send(200, { ok: false, error: 'paste a job offer first' });
+    console.log(`generate: ${engine}, ${tailoring}, ${String(jobOffer).length} chars`);
+    generate({ engine, jobOffer, tailoring }).then(result => send(200, result));
   });
-}).listen(PORT, () => console.log(`claude-bridge listening on :${PORT}`));
+}).listen(PORT, () => console.log(`listening on :${PORT} (web page: http://localhost:${PORT})`));
