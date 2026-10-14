@@ -1,7 +1,6 @@
 """The CV: normalize the AI's JSON, render it in LaTeX, fit it on exactly one page."""
 from fastapi import HTTPException
 
-from .config import ENV
 from .latex import PREAMBLE, compile_tex_pages, github_link, itemize, linkedin_link, bold_terms
 from .text import as_list, clean_keys, first, is_english, raw, tex, tex_url
 
@@ -70,12 +69,12 @@ def normalize_resume(body: dict) -> dict:
     english = raw(lang).lower().startswith("en") if lang else is_english(summary)
 
     return {
-        "name": first(pi, "full_name", "name") or ENV["CV_NAME"],
+        "name": first(pi, "name", "full_name"),
         "headline": first(b, "HEADLINE") or first(pi, "title", "label"),
-        "email": first(pi, "email") or ENV["CV_EMAIL"],
-        "phone": first(pi, "phone") or ENV["CV_PHONE"],
-        "github": first(pi, "github") or ENV["CV_GITHUB"],
-        "linkedin": first(pi, "linkedin") or ENV["CV_LINKEDIN"],
+        "email": first(pi, "email"),
+        "phone": first(pi, "phone"),
+        "github": first(pi, "github"),
+        "linkedin": first(pi, "linkedin"),
         "summary": summary,
         "skills": skills,
         "experience": experience,

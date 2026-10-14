@@ -1,6 +1,15 @@
-Rayen Ameur
+---
+# Contact details: printed as-is on the CV and the cover letter (the AI never rewrites them).
+# Remove a line to leave it out (e.g. phone).
+name: Rayen Ameur
+email: rayen.ameur@outlook.com
+phone: +216 92 164 742
+location: Tunis, Tunisia
+github: github.com/rayenamer
+linkedin: linkedin.com/in/rayen-ameur-10000s000/
+---
+
 Final-year Technology Engineering student
-Email: Rayen_Ameur@hotmail.com | LinkedIn: Rayen Ameur | GitHub: rayenamer | WhatsApp: (+216) 92164742
 
 ABOUT ME
 23-year-old final-year engineering student specializing in technology, with experience spanning software engineering, data analytics, AI, and risk modeling. Completed 5 internships in Software Engineering, Predictive Maintenance AI, and Risk Modeling, and held roles including Software Engineer at a Finance & Accounting SaaS, Data Analyst at AIESEC International, and Team Leader at AIESEC Tunisia. Co-founded a company connecting students with international study opportunities, contributing to product development and business strategy. Holds 16 professional certifications from leading technology companies, including Microsoft, IBM, and SAP.

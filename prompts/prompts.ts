@@ -1,8 +1,5 @@
 // Prompts shared by the three engines (Claude, Gemini, local).
 // Loaded by the app and re-read on every offer: edit, save, generate. No restart needed.
-import fs from 'node:fs';
-import path from 'node:path';
-
 type Engine = 'claude' | 'gemini' | 'local';
 type Tailoring = 'aggressive' | 'strict';
 interface Repo { name: string; tags: string; about: string; url: string }
@@ -32,8 +29,7 @@ const HEADLINE_INTRO = {
 const MAX_EXPERIENCES = 6;
 const TARGET_WORDS = '400-480';
 
-// Your profile: prompts/profile.md (plain text, the AI only starts from this)
-const PROFILE_FILE = path.join(__dirname, 'profile.md');
+// Your profile: prompts/profile.md. The app reads it and passes the text (without the contact block) as `profile`.
 
 // Your GitHub: public repos are read and the AI picks the ones that fit the offer for the PROJECTS section.
 // Set to '' to disable. Refreshed every GITHUB_CACHE_HOURS (forks are skipped).
@@ -111,7 +107,6 @@ const formatRepos = (repos: Repo[], max: number): string => repos
 const RESUME_SCHEMA = {
   SECTION_LANG: '"en" or "fr" (language of the offer)',
   HEADLINE: '<headline intro> | <job title from the offer> | <1-2 key domains of the offer>',
-  personal_information: { full_name: '', email: '', phone: '', github: '', linkedin: '' },
   PROFILE_SUMMARY: '3-4 sentences',
   skills: { '<category named with the offer vocabulary>': ['skill', 'skill'] },
   education: [{ degree: '', institution: '', dates: 'Mon YYYY – Mon YYYY', details: 'optional, a few words' }],
@@ -131,10 +126,8 @@ const LETTER_SCHEMA = {
 };
 
 // tailoring: chosen on the web page per offer; TAILORING above is the default
-export async function buildPrompts({ jobOffer, engine, tailoring }: { jobOffer: string; engine: Engine; tailoring?: Tailoring }) {
-  const profile = fs.readFileSync(PROFILE_FILE, 'utf8').trim();
+export async function buildPrompts({ jobOffer, engine, tailoring, profile }: { jobOffer: string; engine: Engine; tailoring?: Tailoring; profile: string }) {
   const repos = formatRepos(await githubProjects(), engine === 'local' ? 120 : 350);
-  if (!profile) throw new Error('prompts/profile.md is empty: paste your profile in it.');
   const aggressive = (tailoring || TAILORING) === 'aggressive';
   const model = MODELS[engine] || '';
 

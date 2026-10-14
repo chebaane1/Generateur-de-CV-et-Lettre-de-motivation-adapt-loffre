@@ -2,6 +2,7 @@
 import { PDF_URL, PROMPTS_FILE } from './config';
 import { askJson } from './engines';
 import { errorMessage, postJson } from './http';
+import { readProfile } from './profile';
 import type { Content, Engine, GenerateResult, PromptsModule, Tailoring } from './types';
 
 /** prompts/prompts.ts, re-read on every offer so edits apply without a restart */
@@ -30,18 +31,22 @@ function atsReport(resume: Content): string {
 
 /** The whole pipeline. On failure, says which step failed. */
 export async function generate(engine: Engine, jobOffer: string, tailoring?: Tailoring): Promise<GenerateResult> {
-  let step = 'Prompts';
+  let step = 'Profile';
   try {
-    const { resumeRequest, letterRequest } = await loadPrompts().buildPrompts({ jobOffer, engine, tailoring });
+    const { contact, text: profile } = readProfile();
+    step = 'Prompts';
+    const { resumeRequest, letterRequest } = await loadPrompts().buildPrompts({ jobOffer, engine, tailoring, profile });
 
     step = 'CV (AI)';
     const resume = await askJson(engine, resumeRequest);
     resume.PROFILE_SUMMARY = resume.PROFILE_SUMMARY || resume.summary || '';
+    resume.personal_information = contact;      // your details from profile.md, never the AI's
     step = 'CV (PDF)';
     const resumePdf = await compilePdf('resume', resume);
 
     step = 'Cover letter (AI)';
     const letter = await askJson(engine, letterRequest);
+    letter.personal_information = contact;      // the sender
     step = 'Cover letter (PDF)';
     const letterPdf = await compilePdf('letter', letter);
 

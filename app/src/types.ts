@@ -17,9 +17,19 @@ export interface Prompts {
   letterRequest: ModelRequest;
 }
 
-/** What prompts/prompts.ts exports */
+/** Contact block at the top of prompts/profile.md (a missing field isn't printed) */
+export interface Contact {
+  name?: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  github?: string;
+  linkedin?: string;
+}
+
+/** What prompts/prompts.ts exports. profile: the text of prompts/profile.md, without the contact block */
 export interface PromptsModule {
-  buildPrompts(args: { jobOffer: string; engine: Engine; tailoring?: Tailoring }): Promise<Prompts>;
+  buildPrompts(args: { jobOffer: string; engine: Engine; tailoring?: Tailoring; profile: string }): Promise<Prompts>;
 }
 
 /** One call to an AI engine; returns the raw text answer */

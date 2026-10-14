@@ -70,11 +70,12 @@ For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → p
 ├── docker-compose.yml
 ├── .env.example             settings template → copy to .env
 ├── prompts/                 ✏️ YOUR files — edits apply on the next offer
-│   ├── profile.md           your real profile (plain text)
+│   ├── profile.md           you: contact block at the top + your real profile (plain text)
 │   └── prompts.ts           settings + all the prompts, shared by the three engines
 ├── app/                     web page + pipeline (TypeScript, run with tsx)
 │   ├── src/
 │   │   ├── server.ts        HTTP routes
+│   │   ├── profile.ts       reads prompts/profile.md (contact block + text)
 │   │   ├── pipeline.ts      offer → CV → letter, PDF rebuilds
 │   │   ├── engines/         claude.ts, gemini.ts, ollama.ts, index.ts (JSON check + repair)
 │   │   ├── config.ts        settings from .env
@@ -90,8 +91,7 @@ For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → p
 │   │   ├── resume.py        CV layout, fitted on exactly one page
 │   │   ├── letter.py        cover letter layout
 │   │   ├── latex.py         LaTeX blocks + compiler
-│   │   ├── text.py          escaping, tolerant JSON readers
-│   │   └── config.py        contact details from .env
+│   │   └── text.py          escaping, tolerant JSON readers
 │   └── requirements.txt, Dockerfile
 └── data/                    runtime state written by bots.sh (git-ignored)
 ```
@@ -106,9 +106,8 @@ For each offer: `prompts → AI (CV) → PDF → AI (cover letter) → PDF → p
 cp .env.example .env
 ```
 
-Fill in `.env`:
+Fill in `.env` (only keys and technical settings):
 
-- your contact details (`CV_*`)
 - `CLAUDE_CODE_OAUTH_TOKEN` — for Claude:
   ```bash
   npm i -g @anthropic-ai/claude-code
@@ -117,7 +116,7 @@ Fill in `.env`:
 - `GEMINI_API_KEY` — for Gemini (key from https://aistudio.google.com). `GEMINI_MODEL` / `GEMINI_FALLBACK_MODEL` are optional.
 - `OLLAMA_MODEL` — for the local model (default `qwen2.5:3b`)
 
-Put your profile in `prompts/profile.md`.
+Then fill in **`prompts/profile.md`** — everything about you, in one place (see [Customize](#customize)).
 
 ### 2. Build
 
@@ -199,7 +198,23 @@ While generating, on top of that (estimates):
 
 ## Customize
 
-**`prompts/profile.md`** — your real profile (experience, skills, education…). The AI only starts from this.
+**`prompts/profile.md`** — everything about you, in one place:
+
+```markdown
+---
+name: Rayen Ameur
+email: rayen.ameur@outlook.com
+phone: +216 92 164 742
+location: Tunis, Tunisia
+github: github.com/rayenamer
+linkedin: linkedin.com/in/…
+---
+
+Your real profile in plain text: experience, skills, education…
+```
+
+- The **contact block** (between the `---` lines) is printed as-is on the CV and the cover letter — the AI never rewrites it. Remove a line to leave it out (e.g. `phone`).
+- The **text below** is what the AI works from.
 
 **`prompts/prompts.ts`** — settings at the top:
 
@@ -226,7 +241,8 @@ This is the style of the CV that got interviews. The font size is chosen automat
 | Problem | Fix |
 |---|---|
 | Page: *engine "x" is not launched* | `./bots.sh x` (or `./bots.sh all`) |
-| ❌ *Prompts* | Error in `prompts/prompts.ts`, or `prompts/profile.md` is empty — see `docker-compose logs app` |
+| ❌ *Profile* | `prompts/profile.md` is empty or has no `name:` in its contact block |
+| ❌ *Prompts* | Error in `prompts/prompts.ts` — see `docker-compose logs app` |
 | Gemini: *"high demand"* / HTTP 503 / 429 quota | Google is overloaded or your free daily quota is used. The fallback model is tried automatically; otherwise use Claude or retry tomorrow |
 | Gemini: *GEMINI_API_KEY is not set* | Add it to `.env`, then `docker-compose up -d` |
 | Claude: error 429 / limit | Your Pro usage limit is reached (shared with claude.ai). Wait, or set `claude: 'haiku'` in `MODELS` |
@@ -242,4 +258,4 @@ This is the style of the CV that got interviews. The font size is chosen automat
 - **Claude Pro limits are shared** with your normal Claude use. Each offer = 2 generations.
 - **Never set `ANTHROPIC_API_KEY`**: you would be billed API prices.
 - **The page is private**: it only listens on this PC (`127.0.0.1:8080`). Don't expose it — it uses your personal subscription and keys.
-- **Your profile is in `prompts/profile.md`** and your keys in `.env` (git-ignored). Remove the profile before publishing the repo.
+- **You** are in `prompts/profile.md`, the **machine** settings and keys in `.env` (git-ignored). Remove the profile before publishing the repo.

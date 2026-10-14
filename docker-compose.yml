@@ -27,8 +27,6 @@ services:
     build: ./pdf
     container_name: cv-pdf
     restart: unless-stopped
-    env_file:
-      - .env                    # CV_* contact details
 
   # Local open-source model (no account, no API key). Pulls OLLAMA_MODEL on first start.
   ollama:

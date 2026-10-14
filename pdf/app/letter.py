@@ -1,7 +1,6 @@
 """The cover letter: render the AI's paragraphs in LaTeX."""
 from fastapi import HTTPException
 
-from .config import ENV
 from .latex import PREAMBLE, compile_tex, contact_line
 from .text import clean_keys, first, is_english, raw, tex
 
@@ -31,7 +30,9 @@ def render_letter(b: dict) -> str:
     if company:
         right.append(rf"\textbf{{{tex(company)}}}")
 
-    name = ENV["CV_NAME"]
+    # sender: the contact block of prompts/profile.md, added by the app
+    me = b.get("personal_information") or {}
+    name = first(me, "name", "full_name")
     return "\n\n".join([
         r"\documentclass[11pt,a4paper]{article}",
         r"\usepackage[top=2cm,bottom=2cm,left=2.2cm,right=2.2cm]{geometry}",
@@ -43,8 +44,8 @@ def render_letter(b: dict) -> str:
         r"\setlength{\parskip}{0.8em}",
         r"\begin{document}",
         rf"{{\Huge\bfseries\color{{primary}} {tex(name)}}}\\[0.3em]",
-        r"{\small\color{secondary} " + contact_line(ENV["CV_LOCATION"], ENV["CV_EMAIL"], ENV["CV_PHONE"],
-                                                     ENV["CV_GITHUB"], ENV["CV_LINKEDIN"]) + "}",
+        r"{\small\color{secondary} " + contact_line(first(me, "location"), first(me, "email"), first(me, "phone"),
+                                                     first(me, "github"), first(me, "linkedin")) + "}",
         r"\vspace{0.4cm}\hrule\vspace{0.4cm}",
         r"\today\par",
         (r"\begin{flushright}" + " \\\\\n".join(right) + r"\end{flushright}") if right else "",
