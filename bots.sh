@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Start only the bots you want. The others are turned off in n8n.
-#   ./bots.sh claude          only the Claude bot
-#   ./bots.sh gemini local    Gemini + local bots
+# Start only the engines you want. The others are turned off in n8n and hidden on the web page.
+#   ./bots.sh claude          only Claude
+#   ./bots.sh gemini local    Gemini + local model
 #   ./bots.sh all             all three
+# Then open http://localhost:8080
 set -e
 cd "$(dirname "$0")"
 
@@ -10,10 +11,14 @@ cd "$(dirname "$0")"
 want=" $* "
 [[ $want == *" all "* ]] && want=" claude gemini local "
 
-# claude-bridge is always needed: it serves the prompts and the job locks for every bot
+# claude-bridge is always needed: it serves the web page, the prompts and the Gemini calls
 services="n8n xelatex-api claude-bridge"
 [[ $want == *" local "* ]] && services="$services ollama"
 docker-compose up -d $services
+
+# the web page only offers the engines launched here
+engines=$(for b in claude gemini local; do if [[ $want == *" $b "* ]]; then printf '"%s",' "$b"; fi; done)
+echo "[${engines%,}]" > web/engines.json
 
 declare -A NAMES=([claude]="Claude (Pro plan)" [gemini]="Gemini" [local]="Local (Ollama)")
 workflows=$(docker exec n8n n8n list:workflow 2>/dev/null)
@@ -32,4 +37,4 @@ docker restart n8n >/dev/null
 
 # free the RAM used by the local model when its bot is off
 [[ $want == *" local "* ]] || docker-compose stop ollama >/dev/null 2>&1 || true
-echo "Done."
+echo "Done. Open http://localhost:8080"

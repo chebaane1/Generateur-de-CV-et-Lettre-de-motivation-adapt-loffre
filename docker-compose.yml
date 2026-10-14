@@ -28,8 +28,14 @@ services:
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
       - CLAUDE_MODEL=sonnet
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
+      - GEMINI_FALLBACK_MODEL=${GEMINI_FALLBACK_MODEL:-gemini-3.1-flash-lite}
+    ports:
+      - "127.0.0.1:8080:8080"   # web page at http://localhost:8080 (this PC only)
     volumes:
       - ./prompts:/prompts:ro   # shared prompts + profile, edits apply on the next offer
+      - ./web:/web              # web page; bots.sh writes engines.json here
 
   # Local open-source model (no account, no API key). Pulls OLLAMA_MODEL on first start.
   ollama:

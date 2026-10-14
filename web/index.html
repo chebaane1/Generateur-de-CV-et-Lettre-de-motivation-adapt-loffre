@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CV Generator</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#2f5bea; --ok:#16794c; --err:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161b; --card:#1d2027; --text:#e7e9ee; --muted:#9aa1ad; --line:#2d313a; --accent:#6d8dff; --ok:#4ccf8f; --err:#ff7a6e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1200px; margin:0 auto; padding:24px 16px; display:grid; grid-template-columns: 420px 1fr; gap:20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  label { display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:12px 0 6px; }
+  textarea, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+  textarea { height:300px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 12px; }
+  button.primary { width:100%; margin-top:14px; background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; padding:11px; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .status { margin-top:10px; font-size:13px; min-height:20px; }
+  .status.err { color:var(--err); } .status.ok { color:var(--ok); }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tabs button.active { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .tabs a { margin-left:auto; }
+  a.dl { color:var(--accent); text-decoration:none; font-size:14px; padding:8px 4px; }
+  iframe { width:100%; height:78vh; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .empty { color:var(--muted); text-align:center; padding:80px 20px; }
+  pre { white-space:pre-wrap; font:13px/1.5 ui-monospace, monospace; background:var(--bg); border-radius:8px; padding:10px; margin:10px 0 0; }
+  .history { margin-top:16px; }
+  .history ul { list-style:none; margin:0; padding:0; }
+  .history li { padding:7px 0; border-top:1px solid var(--line); font-size:13px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
+  .history li:hover { color:var(--accent); }
+  .history small { color:var(--muted); white-space:nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>CV & Cover Letter Generator</h1>
+    <p class="sub">Paste a job offer, get a tailored one-page CV and cover letter.</p>
+    <div class="card">
+      <label for="offer">Job offer</label>
+      <textarea id="offer" placeholder="Paste the full job offer here…"></textarea>
+      <div class="row">
+        <div>
+          <label for="engine">Engine</label>
+          <select id="engine"></select>
+        </div>
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="aggressive">Aggressive (rewrite to match)</option>
+            <option value="strict">Strict (only my real profile)</option>
+          </select>
+        </div>
+      </div>
+      <button class="primary" id="go">Generate</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="card history">
+      <label>History (this browser)</label>
+      <ul id="history"></ul>
+    </div>
+  </section>
+
+  <section class="card" id="result">
+    <div class="empty" id="empty">Your CV and cover letter will appear here.</div>
+    <div id="view" hidden>
+      <div class="tabs">
+        <button data-tab="cv" class="active">CV</button>
+        <button data-tab="letter">Cover letter</button>
+        <button data-tab="ats">ATS report</button>
+        <a class="dl" id="dl">Download</a>
+      </div>
+      <iframe id="pdf" title="PDF preview"></iframe>
+      <pre id="ats" hidden></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const ENGINE_NAMES = { claude: 'Claude (Pro plan)', gemini: 'Gemini', local: 'Local model (slow)' };
+const HISTORY_KEY = 'cv-history', MAX_HISTORY = 10;
+let current = null, tab = 'cv', urls = {};
+
+// The model output is LaTeX-escaped upstream; show it as plain text
+const plain = s => String(s || '').replace(/\\textbackslash\{\}/g, '\\').replace(/\\textasciitilde\{\}/g, '~')
+  .replace(/\\textasciicircum\{\}/g, '^').replace(/\\([&%$#_{}])/g, '$1');
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; } },
+  set(list) {
+    // PDFs are big: drop the oldest entries until it fits
+    for (let l = list.slice(0, MAX_HISTORY); l.length; l.pop()) {
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(l)); return; } catch {}
+    }
+  }
+};
+const pref = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch {} };
+
+async function loadEngines() {
+  let engines = ['claude', 'gemini', 'local'];
+  try { engines = (await (await fetch('/api/engines')).json()).engines; } catch {}
+  $('engine').innerHTML = engines.map(e => `<option value="${e}">${ENGINE_NAMES[e] || e}</option>`).join('');
+  if (!engines.length) setStatus('No engine launched: run ./bots.sh claude|gemini|local', 'err');
+  const saved = pref('cv-engine'); if (engines.includes(saved)) $('engine').value = saved;
+  $('mode').value = pref('cv-mode') || 'aggressive';
+}
+
+function setStatus(text, cls = '') { $('status').textContent = text; $('status').className = 'status ' + cls; }
+
+function pdfUrl(b64) {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
+
+function show(entry) {
+  current = entry;
+  Object.values(urls).forEach(URL.revokeObjectURL);
+  urls = { cv: pdfUrl(entry.resumePdf), letter: pdfUrl(entry.letterPdf) };
+  $('ats').textContent = [plain(entry.headline), '', plain(entry.atsReport)].join('\n').trim();
+  $('empty').hidden = true; $('view').hidden = false;
+  setTab('cv');
+}
+
+function setTab(t) {
+  tab = t;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  const isPdf = t !== 'ats';
+  $('pdf').hidden = !isPdf; $('ats').hidden = isPdf; $('dl').hidden = !isPdf;
+  if (isPdf) {
+    $('pdf').src = urls[t];
+    const company = plain(current.company).replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'offer';
+    $('dl').href = urls[t];
+    $('dl').download = `${t === 'cv' ? 'CV' : 'Lettre'}_${company}.pdf`;
+    $('dl').textContent = `Download ${t === 'cv' ? 'CV' : 'letter'}`;
+  }
+}
+
+function renderHistory() {
+  const list = store.get();
+  $('history').innerHTML = list.length ? '' : '<li style="cursor:default"><small>Nothing yet</small></li>';
+  list.forEach((e, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span></span><small></small>`;
+    li.firstChild.textContent = `${plain(e.company) || '—'} · ${plain(e.jobTitle) || ''}`;
+    li.lastChild.textContent = `${e.engine} · ${new Date(e.date).toLocaleDateString()}`;
+    li.onclick = () => show(list[i]);
+    $('history').appendChild(li);
+  });
+}
+
+async function generate() {
+  const jobOffer = $('offer').value.trim();
+  if (!jobOffer) return setStatus('Paste a job offer first.', 'err');
+  const engine = $('engine').value, tailoring = $('mode').value;
+  pref('cv-engine', engine); pref('cv-mode', tailoring);
+  $('go').disabled = true;
+  const start = Date.now();
+  const timer = setInterval(() => setStatus(`Generating with ${ENGINE_NAMES[engine]}… ${Math.round((Date.now() - start) / 1000)}s`), 1000);
+  try {
+    const res = await (await fetch('/api/generate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ engine, tailoring, jobOffer })
+    })).json();
+    if (!res.ok) throw new Error((res.step ? `${res.step}: ` : '') + (res.error || 'generation failed'));
+    const entry = { ...res, engine, date: Date.now() };
+    show(entry);
+    store.set([entry, ...store.get()]);
+    renderHistory();
+    setStatus(`Done in ${Math.round((Date.now() - start) / 1000)}s.`, 'ok');
+  } catch (e) {
+    setStatus('❌ ' + e.message, 'err');
+  } finally {
+    clearInterval(timer);
+    $('go').disabled = false;
+  }
+}
+
+$('go').onclick = generate;
+document.querySelectorAll('.tabs button').forEach(b => (b.onclick = () => setTab(b.dataset.tab)));
+loadEngines();
+renderHistory();
+</script>
+</body>
+</html>

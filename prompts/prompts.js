@@ -12,24 +12,106 @@ const TAILORING = 'aggressive';
 // Model per bot. Gemini's model is chosen in the Gemini workflow nodes.
 const MODELS = {
   claude: 'sonnet',                                  // 'sonnet' or 'haiku' (lighter on your Pro limits)
+  gemini: process.env.GEMINI_MODEL || 'gemini-3.6-flash', // set GEMINI_MODEL in .env (fallback: GEMINI_FALLBACK_MODEL)
   local: process.env.OLLAMA_MODEL || 'qwen2.5:3b'    // set OLLAMA_MODEL in .env
 };
+
+// First words of the CV headline, under your name (the job title from the offer is added after)
+const HEADLINE_INTRO = {
+  fr: "Cherche un stage de fin d'études",
+  en: 'Looking for an end-of-studies internship'
+};
+
+// One-page CV: keep every relevant experience (up to MAX_EXPERIENCES) and fill the page.
+// The PDF engine adjusts the font size so it always fits on one page.
+const MAX_EXPERIENCES = 6;
+const TARGET_WORDS = '400-480';
 
 // Your profile: prompts/profile.md (plain text, the AI only starts from this)
 const PROFILE_FILE = path.join(__dirname, 'profile.md');
 
+// Your GitHub: public repos are read and the AI picks the ones that fit the offer for the PROJECTS section.
+// Set to '' to disable. Refreshed every GITHUB_CACHE_HOURS (forks are skipped).
+const GITHUB_USER = 'rayenamer';
+const GITHUB_CACHE_HOURS = 12;
+const PROJECTS_COUNT = '2-3';
+
 // ====================
+
+// --- GitHub projects -------------------------------------------------------
+// The repo list comes from the GitHub API (1 request); README excerpts come from raw.githubusercontent.com,
+// which is not rate-limited like the API. Set GITHUB_TOKEN in .env to raise the API limit if needed.
+const GH_HEADERS = {
+  'User-Agent': 'cv-generator',
+  ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
+};
+
+// Markdown README -> a short plain-text excerpt
+function readmeExcerpt(md, max = 350) {
+  return md
+    .replace(/```[\s\S]*?```/g, ' ')            // code blocks
+    .replace(/<[^>]+>/g, ' ')                   // HTML tags
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')      // images
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')    // links -> text
+    .replace(/[#>*_`|~-]+/g, ' ')               // markdown symbols
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+async function fetchReadme(repo) {
+  for (const name of ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README']) {
+    try {
+      const res = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${repo.name}/${repo.default_branch}/${name}`,
+        { signal: AbortSignal.timeout(8000) });
+      if (res.ok) return readmeExcerpt(await res.text());
+    } catch { /* try the next name */ }
+  }
+  return '';
+}
+
+// Returns [{ name, tags, about, url }]. Kept on globalThis because this file is re-loaded on every offer
+async function githubProjects() {
+  if (!GITHUB_USER) return [];
+  const cache = globalThis.__githubCache;
+  if (cache && cache.user === GITHUB_USER && Date.now() - cache.at < GITHUB_CACHE_HOURS * 3600e3) return cache.repos;
+  try {
+    const res = await fetch(`https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=pushed`,
+      { headers: GH_HEADERS, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    const repos = (await res.json()).filter(r => !r.fork && r.name.toLowerCase() !== GITHUB_USER.toLowerCase());
+    const list = await Promise.all(repos.map(async r => ({
+      name: r.name,
+      tags: [r.language, ...(r.topics || [])].filter(Boolean).join(', '),
+      about: r.description || await fetchReadme(r),
+      url: r.html_url
+    })));
+    globalThis.__githubCache = { user: GITHUB_USER, at: Date.now(), repos: list };
+    console.log(`github: ${list.length} repos loaded for ${GITHUB_USER}`);
+    return list;
+  } catch (e) {
+    console.error('github: could not load repos:', e.message);
+    return cache ? cache.repos : [];   // keep the last good list, or go on without GitHub projects
+  }
+}
+
+// One line per repo; the local model gets shorter excerpts to fit its small context window
+const formatRepos = (repos, max) => repos
+  .map(r => `- ${r.name}${r.tags ? ` (${r.tags})` : ''}: ${(r.about || 'no description').slice(0, max)} | ${r.url}`)
+  .join('\n');
 
 // Must match what http://xelatex-api:8000/compile-resume expects (ATS_* keys are only used for the Telegram report)
 const RESUME_SCHEMA = {
   SECTION_LANG: '"en" or "fr" (language of the offer)',
-  HEADLINE: 'job title exactly as written in the offer',
+  HEADLINE: '<headline intro> | <job title from the offer> | <1-2 key domains of the offer>',
   personal_information: { full_name: '', email: '', phone: '', github: '', linkedin: '' },
   PROFILE_SUMMARY: '3-4 sentences',
   skills: { '<category named with the offer vocabulary>': ['skill', 'skill'] },
-  experience: [{ title: '', company: '', location: '', dates: 'Mon YYYY – Mon YYYY', responsibilities: ['bullet'] }],
-  education: [{ degree: '', institution: '', dates: '' }],
-  certifications: [''],
+  education: [{ degree: '', institution: '', dates: 'Mon YYYY – Mon YYYY', details: 'optional, a few words' }],
+  experience: [{ title: '', company: '', dates: 'Mon YYYY – Mon YYYY', responsibilities: ['one-line bullet'] }],
+  PROJECTS: [{ name: 'readable project name', description: 'one line: what it does + key tools', url: 'GitHub repo URL, or empty' }],
+  certifications: ['at most 3, only if relevant to the offer, else empty'],
+  TECH_KEYWORDS: ['every technology named in the resume: languages, frameworks, libraries, tools, cloud services, databases (exact spelling used in the resume)'],
   ATS_MATCHED: ['offer keyword present in the resume'],
   ATS_MISSING: ['offer keyword the resume does not cover'],
   ATS_ADDED: ['title, task or skill written in the resume that is NOT in the candidate profile']
@@ -41,10 +123,12 @@ const LETTER_SCHEMA = {
   PARAGRAPH_HOOK: '', PARAGRAPH_VALUE: '', PARAGRAPH_ALIGNMENT: '', PARAGRAPH_CTA: ''
 };
 
-function buildPrompts({ jobOffer, engine }) {
+// tailoring: chosen on the web page per offer; TAILORING above is the default
+async function buildPrompts({ jobOffer, engine, tailoring }) {
   const profile = fs.readFileSync(PROFILE_FILE, 'utf8').trim();
+  const repos = formatRepos(await githubProjects(), engine === 'local' ? 120 : 350);
   if (!profile) throw new Error('prompts/profile.md is empty: paste your profile in it.');
-  const aggressive = TAILORING === 'aggressive';
+  const aggressive = (tailoring || TAILORING) === 'aggressive';
   const model = MODELS[engine] || '';
 
   const system = [
@@ -65,18 +149,20 @@ function buildPrompts({ jobOffer, engine }) {
   ].join('\n');
 
   const experienceRules = aggressive
-    ? `5. EXPERIENCE: keep every real company, location and date, in reverse-chronological order.
-   - Title: rename each role to the offer's job title, or the closest variant that fits that company (keep "Intern" for internships).
-   - Bullets: 3-4 per role describing tasks taken from the offer's responsibilities and requirements, adapted to that company's business.
-     Spread the offer's requirements across the roles (most recent roles get the core ones). Start each bullet with a strong action verb,
-     reuse the offer's exact keywords and phrases, name the tools. No invented numbers.
+    ? `5. EXPERIENCE: include EVERY experience that is relevant to the offer (up to ${MAX_EXPERIENCES}) — don't be shy:
+   an experience is relevant if its tasks, tools or domain can support the offer. Leave out only clearly unrelated ones.
+   Keep their real company and dates, reverse-chronological order.
+   - Title: rename each role to the offer's job title, or the closest variant that fits that company (keep "Intern" / "Stagiaire" for internships).
+   - Bullets: 2-3 per role, ONE line each (max ~18 words), describing tasks taken from the offer's responsibilities, adapted to that company's business.
+     Name the tools, reuse the offer's exact keywords, show production concerns (robustness, tests, monitoring, scalability). No invented numbers.
    - List in ATS_ADDED every title, task or skill you wrote that the profile does not support.`
-    : `5. EXPERIENCE: keep every real employer, title and date, in reverse-chronological order.
+    : `5. EXPERIENCE: include EVERY experience that is relevant to the offer (up to ${MAX_EXPERIENCES}) — don't be shy:
+   an experience is relevant if its tasks, tools or domain can support the offer. Leave out only clearly unrelated ones.
+   Keep their real employer, title and date, reverse-chronological order.
    - Title: keep the real title. You may add a short focus in the offer's vocabulary after " – " when that role's description supports it
      (e.g. "Software Engineer Intern – Backend .NET"). Never change the role itself or its seniority.
-   - Bullets: for each offer requirement, find the experience that proves it and write a bullet for it there.
-     2-4 bullets for relevant roles, 1 bullet for unrelated roles. Start each bullet with a strong action verb,
-     reuse the offer's exact keywords and phrases, name the tools used. No invented numbers.
+   - Bullets: 2-3 per role, ONE line each (max ~18 words): for each offer requirement, find the experience that proves it and write it there.
+     Name the tools used, reuse the offer's exact keywords. No invented numbers.
    - ATS_ADDED must be an empty list.`;
 
   const resumeTask = `Tailor the resume to this offer, step by step:
@@ -86,19 +172,39 @@ function buildPrompts({ jobOffer, engine }) {
      ? 'Put ALL of them in ATS_MATCHED (the resume must cover every one) and leave ATS_MISSING empty.'
      : 'Split them into those the candidate profile supports (ATS_MATCHED) and those it does not (ATS_MISSING).'}
 
-2. HEADLINE: the job title exactly as written in the offer${aggressive ? '' : ' (drop "Senior", "Lead", "Head of" or similar only if the profile does not support that seniority)'}.
+2. HEADLINE: one line, "<intro> | <job title> | <1-2 key domains of the offer>".
+   <intro> is exactly "${HEADLINE_INTRO.fr}" if the offer is in French, "${HEADLINE_INTRO.en}" otherwise.
+   <job title> is written as in the offer${aggressive ? '' : ' (drop "Senior", "Lead", "Head of" or similar if the profile does not support that seniority)'}.
 
-3. PROFILE_SUMMARY: 3-4 sentences that contain the exact job title and the most important ${aggressive ? '' : 'matched '}keywords, written as a pitch for THIS role.
+3. PROFILE_SUMMARY: 3-4 dense sentences: who the candidate is for THIS role (exact job title), the core ${aggressive ? '' : 'matched '}keywords and tools,
+   one concrete achievement, and a last sentence saying the candidate is looking for an end-of-studies internship in this field.
 
-4. SKILLS: 3-5 categories whose names use the offer's vocabulary.
+4. SKILLS: exactly 4 categories (e.g. "Langages & Frameworks", "Cloud & IA", "Patterns IA", "Stack complet"), names in the offer's vocabulary, 4-7 items each.
    In each category, list first the ${aggressive ? 'offer' : 'matched'} keywords using the offer's exact spelling, then other profile skills relevant to the role. Omit irrelevant skills.
    Write important acronyms once in both forms, e.g. "Value at Risk (VaR)", "Continuous Integration/Continuous Delivery (CI/CD)".
 
 ${experienceRules}
 
-6. COVERAGE CHECK: every ATS_MATCHED keyword must appear at least once in the resume, ideally twice (skills + experience). Fix gaps before answering.
+6. KEYWORD REPETITION: the 5-8 core keywords of the offer must each appear in several sections (summary, skills, experience, projects),
+   2-4 times in total. Every other ATS_MATCHED keyword appears at least once. Fix gaps before answering.
 
-7. EDUCATION and CERTIFICATIONS: copy from the profile, relevant certifications first.
+7. EDUCATION: copy from the profile, most recent first, short (degree • school, dates).
+
+8. PROJECTS: ${PROJECTS_COUNT} projects, one line each, the most relevant to the offer${repos ? `, chosen from <github_projects>:
+   - pick by tools, domain and problem solved; prefer repos with a real description
+   - name: readable (e.g. "AssisTech — RAG assistant for technicians"), url: the repo URL
+   - description: what it does + key tools, rephrased in the offer's vocabulary${aggressive
+       ? `; you may add a few offer keywords that fit what the project does (list them in ATS_ADDED)`
+       : ', using only facts from the repo description'}
+   - if no repo fits the offer, ${aggressive ? 'derive projects from the work described in the profile (url empty)' : 'use projects from the profile, else leave empty'}` : (aggressive
+       ? ' (taken or derived from the work described in the profile, url empty)'
+       : ' (only projects described in the profile, else empty)')}.
+
+9. TECH_KEYWORDS: list every technology you named anywhere in the resume (Python, FastAPI, Azure OpenAI, Docker…), spelled exactly as in the resume.
+   They are printed in bold so a recruiter sees the stack at a glance: name tools explicitly in every bullet.
+
+10. ONE FULL PAGE: the whole resume is ${TARGET_WORDS} words, enough to fill one page without overflowing.
+   Compact phrasing ("FastAPI API + LangChain for X", not long sentences). No location fields.
 
 Return JSON with EXACTLY these keys and structure (values shown are descriptions, replace them):
 ${JSON.stringify(RESUME_SCHEMA, null, 2)}`;
@@ -112,11 +218,12 @@ ${JSON.stringify(RESUME_SCHEMA, null, 2)}`;
 Return JSON with EXACTLY these keys:
 ${JSON.stringify(LETTER_SCHEMA, null, 2)}`;
 
-  const userContent = task =>
-    `<job_offer>\n${jobOffer}\n</job_offer>\n\n<candidate_profile>\n${profile}\n</candidate_profile>\n\n${task}`;
+  const userContent = (task, extra = '') =>
+    `<job_offer>\n${jobOffer}\n</job_offer>\n\n<candidate_profile>\n${profile}\n</candidate_profile>\n\n${extra}${task}`;
+  const githubBlock = repos ? `<github_projects>\n${repos}\n</github_projects>\n\n` : '';
 
   return {
-    resumeRequest: { model, max_tokens: 8192, system, messages: [{ role: 'user', content: userContent(resumeTask) }] },
+    resumeRequest: { model, max_tokens: 8192, system, messages: [{ role: 'user', content: userContent(resumeTask, githubBlock) }] },
     letterRequest: { model, max_tokens: 2048, system, messages: [{ role: 'user', content: userContent(letterTask) }] }
   };
 }

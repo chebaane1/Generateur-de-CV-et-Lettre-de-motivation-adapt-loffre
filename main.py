@@ -1,3 +1,4 @@
+import base64
 import os
 import re
 import subprocess
@@ -6,6 +7,7 @@ from typing import Any, Dict, List
 from urllib.parse import quote
 
 from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -122,18 +124,31 @@ def contact_line(location="", email="", phone="", github="", linkedin="") -> str
     return r" ~$\diamond$~ ".join(parts)
 
 
-def itemize(items: List[str]) -> str:
+def bold_terms(text: Any, terms: List[str]) -> str:
+    """Escape text for LaTeX and put the given technologies in bold (whole words, longest first)."""
+    out = tex(text)
+    terms = sorted({raw(t) for t in terms if len(raw(t)) >= 2}, key=len, reverse=True)
+    if not terms:
+        return out
+    # short names (R, Go, C#…) must match the case exactly, longer ones ignore case
+    alts = [re.escape(tex(t)) if len(t) <= 3 else f"(?i:{re.escape(tex(t))})" for t in terms]
+    pattern = re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(alts) + r")(?![A-Za-z0-9])")
+    return pattern.sub(lambda m: rf"\textbf{{{m.group(0)}}}", out)
+
+
+def itemize(items: List[str], terms: List[str] = ()) -> str:
     items = [i for i in items if raw(i)]
     if not items:
         return ""
-    return "\\begin{itemize}\n" + "\n".join(rf"  \item {tex(i)}" for i in items) + "\n\\end{itemize}"
+    return "\\begin{itemize}\n" + "\n".join(rf"  \item {bold_terms(i, terms)}" for i in items) + "\n\\end{itemize}"
 
 
 def two_col(left: str, right: str) -> str:
     return rf"{left} \hfill {right}" if right else left
 
 
-def compile_tex(tex_content: str, name: str, label: str) -> bytes:
+def compile_tex_pages(tex_content: str, name: str, label: str) -> tuple:
+    """Compile with XeLaTeX, return (pdf bytes, number of pages)."""
     with tempfile.TemporaryDirectory() as temp_dir:
         tex_file = os.path.join(temp_dir, f"{name}.tex")
         pdf_file = os.path.join(temp_dir, f"{name}.pdf")
@@ -157,11 +172,23 @@ def compile_tex(tex_content: str, name: str, label: str) -> bytes:
                         break
             raise HTTPException(status_code=422, detail=f"Échec XeLaTeX ({label}) :\n{detail}")
 
+        pages = 1
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            m = re.search(r"Output written on .*?\((\d+) pages?", f.read(), re.S)
+            if m:
+                pages = int(m.group(1))
         with open(pdf_file, "rb") as f:
-            return f.read()
+            return f.read(), pages
 
 
-def pdf_response(pdf: bytes, filename: str) -> Response:
+def compile_tex(tex_content: str, name: str, label: str) -> bytes:
+    return compile_tex_pages(tex_content, name, label)[0]
+
+
+def pdf_response(pdf: bytes, filename: str, output: str = "pdf") -> Response:
+    """The PDF file, or {"pdf": "<base64>"} with ?output=base64 (used by n8n to send it to the web page)."""
+    if output == "base64":
+        return JSONResponse({"pdf": base64.b64encode(pdf).decode()})
     return Response(content=pdf, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(filename)}'})
 
@@ -205,7 +232,6 @@ def normalize_resume(body: dict) -> dict:
         experience.append({
             "title": first(e, "title", "position", "role"),
             "company": first(e, "company", "name", "organization"),
-            "location": first(e, "location"),
             "dates": dates,
             "bullets": as_list(first(e, "responsibilities", "highlights", "bullets", "description", default=[])),
         })
@@ -221,7 +247,17 @@ def normalize_resume(body: dict) -> dict:
             "degree": first(ed, "degree", "area", "studyType"),
             "institution": first(ed, "institution", "school"),
             "dates": dates,
+            "details": first(ed, "details", "description"),
         })
+
+    # projects: [{"name": .., "description": ..}]  or  ["Name • description"]
+    projects = []
+    for pr in b.get("PROJECTS") or b.get("projects") or []:
+        if isinstance(pr, dict):
+            projects.append({"name": first(pr, "name", "title"), "description": first(pr, "description", "summary"),
+                             "url": first(pr, "url", "link")})
+        elif raw(pr):
+            projects.append({"name": "", "description": str(pr), "url": ""})
 
     lang = first(b, "SECTION_LANG", "LANG")
     english = raw(lang).lower().startswith("en") if lang else is_english(summary)
@@ -229,7 +265,6 @@ def normalize_resume(body: dict) -> dict:
     return {
         "name": first(pi, "full_name", "name") or ENV["CV_NAME"],
         "headline": first(b, "HEADLINE") or first(pi, "title", "label"),
-        "location": first(pi, "location") or ENV["CV_LOCATION"],
         "email": first(pi, "email") or ENV["CV_EMAIL"],
         "phone": first(pi, "phone") or ENV["CV_PHONE"],
         "github": first(pi, "github") or ENV["CV_GITHUB"],
@@ -238,82 +273,104 @@ def normalize_resume(body: dict) -> dict:
         "skills": skills,
         "experience": experience,
         "education": education,
+        "projects": projects,
         "certifications": as_list(b.get("certifications")),
         "languages": as_list(b.get("languages")),
+        "tech": as_list(b.get("TECH_KEYWORDS")),   # printed in bold in summary, bullets and projects
         "english": english,
     }
 
 
-def render_resume(d: dict) -> str:
-    h = ({"profile": "Profile", "skills": "Skills", "exp": "Professional Experience",
-          "edu": "Education", "certs": "Certifications", "langs": "Languages"} if d["english"] else
-         {"profile": "Profil", "skills": "Compétences", "exp": "Expérience professionnelle",
-          "edu": "Formation", "certs": "Certifications", "langs": "Langues"})
+def render_resume(d: dict, size: float = 11) -> str:
+    """One-page, single-column, serif layout (the style of the CV that got interviews)."""
+    h = ({"profile": "Profile", "skills": "Skills", "edu": "Education", "exp": "Experience",
+          "projects": "Projects", "certs": "Certifications", "langs": "Languages"} if d["english"] else
+         {"profile": "Profil", "skills": "Compétences", "edu": "Formation", "exp": "Expérience",
+          "projects": "Projets", "certs": "Certifications", "langs": "Langues"})
     out = [
-        r"\documentclass[10pt,a4paper]{article}",
-        r"\usepackage[a4paper,left=1.5cm,right=1.5cm,top=1.4cm,bottom=1.4cm]{geometry}",
+        r"\documentclass[a4paper]{article}",
+        r"\usepackage[a4paper,left=1.4cm,right=1.4cm,top=1.1cm,bottom=1.1cm]{geometry}",
         PREAMBLE % ("english" if d["english"] else "french"),
-        r"\usepackage{titlesec}",
-        r"\usepackage{setspace}",
-        r"\setstretch{1.12}",
-        r"\definecolor{primary}{RGB}{33,37,41}",
+        # Times-like font, as in the original CV (TeX Gyre Termes ships with texlive-fonts-recommended)
+        r"\setmainfont{texgyretermes}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,"
+        r"ItalicFont=*-italic,BoldItalicFont=*-bolditalic]",
+        rf"\fontsize{{{size}}}{{{size * 1.2:.1f}}}\selectfont",
         r"\pagestyle{empty}",
         r"\setlength{\parindent}{0pt}",
-        r"\titleformat{\section}{\large\bfseries\scshape\color{primary}}{}{0em}{}[\titlerule]",
-        r"\titlespacing*{\section}{0pt}{9pt}{4pt}",
-        r"\setlist[itemize]{leftmargin=1.2em,labelsep=0.4em,topsep=1pt,itemsep=1pt,parsep=0pt}",
-        r"\newcommand{\needlines}[1]{\par\ifdim\dimexpr\pagegoal-\pagetotal\relax<#1\baselineskip\newpage\fi}",
+        r"\setlist[itemize]{label=\textbullet,leftmargin=0.9em,labelsep=0.35em,topsep=1pt,itemsep=0pt,parsep=0pt}",
+        # sections share the space left at the bottom of the page, so the page looks full
+        r"\newcommand{\cvsection}[1]{\par\vspace{5pt plus 1fill}{\large\bfseries\MakeUppercase{#1}}\par\vspace{2pt}}",
         rf"\hypersetup{{pdfauthor={{{tex(d['name'])}}},pdftitle={{CV - {tex(d['name'])}}}}}",
         r"\begin{document}",
+        rf"\fontsize{{{size}}}{{{size * 1.2:.1f}}}\selectfont",
         r"\begin{center}",
-        rf"{{\Huge\bfseries\scshape {tex(d['name'])}}}\\[3pt]",
+        rf"{{\LARGE\bfseries {tex(d['name']).upper()}}}\\[3pt]",
     ]
     if raw(d["headline"]):
-        out.append(rf"{{\large {tex(d['headline'])}}}\\[2pt]")
-    out += [r"\small " + contact_line(d["location"], d["email"], d["phone"], d["github"], d["linkedin"]),
-            r"\end{center}",
-            rf"\section*{{{h['profile']}}}", tex(d["summary"])]
+        out.append(rf"{tex(d['headline'])}\\[2pt]")
+    contacts = [rf"\href{{mailto:{tex_url(d['email'])}}}{{{tex(d['email'])}}}" if raw(d["email"]) else "",
+                tex(d["phone"]) if raw(d["phone"]) else "",
+                linkedin_link(d["linkedin"]), github_link(d["github"])]
+    out += [r" \textbullet{} ".join(c for c in contacts if c), r"\end{center}",
+            rf"\cvsection{{{h['profile']}}}", bold_terms(d["summary"], d["tech"])]
 
     skills = {k: v for k, v in d["skills"].items() if v}
     if skills:
-        out += [rf"\section*{{{h['skills']}}}", r"\begin{itemize}[leftmargin=0pt,label={}]"]
-        for cat, items in skills.items():
-            prefix = rf"\textbf{{{tex(cat)}}} : " if raw(cat) else ""
-            out.append(r"  \item " + prefix + ", ".join(tex(i) for i in items))
-        out.append(r"\end{itemize}")
-
-    if d["experience"]:
-        out.append(rf"\section*{{{h['exp']}}}")
-        for e in d["experience"]:
-            lines = [two_col(rf"\textbf{{{tex(e['title'])}}}", tex(e["dates"]))]
-            if raw(e["company"]) or raw(e["location"]):
-                lines.append(two_col(rf"\textit{{{tex(e['company'])}}}",
-                                     rf"\textit{{{tex(e['location'])}}}" if raw(e["location"]) else ""))
-            # keep the job header with its first bullet, but let the page break between jobs
-            out += [r"\needlines{5}", " \\\\*\n".join(lines) + r"\nopagebreak", itemize(e["bullets"]), r"\vspace{3pt}"]
+        out.append(rf"\cvsection{{{h['skills']}}}")
+        out.append(" \\\\\n".join((rf"\textbf{{{tex(cat)}:}} " if raw(cat) else "") + ", ".join(tex(i) for i in items)
+                                  for cat, items in skills.items()))
 
     if d["education"]:
-        out.append(rf"\section*{{{h['edu']}}}")
+        out.append(rf"\cvsection{{{h['edu']}}}")
+        rows = []
         for ed in d["education"]:
-            lines = [two_col(rf"\textbf{{{tex(ed['degree'])}}}", tex(ed["dates"]))]
-            if raw(ed["institution"]):
-                lines.append(rf"\textit{{{tex(ed['institution'])}}}")
-            out += [" \\\\\n".join(lines), r"\vspace{3pt}"]
+            title = " \\textbullet{} ".join(tex(x) for x in (ed["degree"], ed["institution"]) if raw(x))
+            sub = ", ".join(tex(x) for x in (ed["dates"], ed["details"]) if raw(x))
+            rows.append(rf"\textbf{{{title}}}" + (rf" \\ {sub}" if sub else ""))
+        out.append(" \\\\[2pt]\n".join(rows))
+
+    if d["experience"]:
+        out.append(rf"\cvsection{{{h['exp']}}}")
+        for e in d["experience"]:
+            title = " \\textbullet{} ".join(tex(x) for x in (e["title"], e["company"]) if raw(x))
+            line = rf"\textbf{{{title}}}" + (rf" --- \textit{{{tex(e['dates'])}}}" if raw(e["dates"]) else "")
+            out += [r"\par\vspace{2pt}" + line + r"\nopagebreak", itemize(e["bullets"], d["tech"])]
+
+    if d["projects"]:
+        out.append(rf"\cvsection{{{h['projects']}}}")
+        def project_name(p):
+            name = rf"\textbf{{{tex(p['name'])}}}"
+            return rf"\href{{{tex_url(p['url'])}}}{{{name}}}" if raw(p["url"]).startswith("http") else name
+        out.append(r"\begin{itemize}" + "\n".join(
+            r"  \item " + (project_name(p) + " --- " if raw(p["name"]) else "") + bold_terms(p["description"], d["tech"])
+            for p in d["projects"] if raw(p["description"]) or raw(p["name"])) + r"\end{itemize}")
 
     if d["certifications"]:
-        out += [rf"\section*{{{h['certs']}}}", itemize(d["certifications"])]
+        out += [rf"\cvsection{{{h['certs']}}}", "; ".join(tex(c) for c in d["certifications"])]
 
     if d["languages"]:
-        out += [rf"\section*{{{h['langs']}}}", r" ~$\diamond$~ ".join(tex(l) for l in d["languages"])]
+        out += [rf"\cvsection{{{h['langs']}}}", " \\textbullet{} ".join(tex(l) for l in d["languages"])]
 
     out.append(r"\end{document}")
     return "\n".join(out)
 
 
 @app.post("/compile-resume")
-async def compile_resume(body: Dict[str, Any] = Body(...)):
-    return pdf_response(compile_tex(render_resume(normalize_resume(body)), "resume", "CV"),
-                        "CV_generated.pdf")
+async def compile_resume(body: Dict[str, Any] = Body(...), output: str = "pdf"):
+    d = normalize_resume(body)
+    # Exactly one full page: the largest font size that still fits on one page
+    sizes = [9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5]
+    i = sizes.index(11)
+    pdf, pages = compile_tex_pages(render_resume(d, sizes[i]), "resume", "CV")
+    step = 1 if pages <= 1 else -1
+    while 0 <= i + step < len(sizes):
+        nxt_pdf, nxt_pages = compile_tex_pages(render_resume(d, sizes[i + step]), "resume", "CV")
+        if step > 0 and nxt_pages > 1:
+            break                      # one size too big: keep the last one that fit
+        i, pdf, pages = i + step, nxt_pdf, nxt_pages
+        if step < 0 and pages <= 1:
+            break                      # first size small enough
+    return pdf_response(pdf, "CV_generated.pdf", output)
 
 
 # ============================================================ cover letter ===
@@ -372,6 +429,6 @@ def render_letter(b: dict) -> str:
 
 
 @app.post("/compile-cover-letter")
-async def compile_cover_letter(body: Dict[str, Any] = Body(...)):
+async def compile_cover_letter(body: Dict[str, Any] = Body(...), output: str = "pdf"):
     return pdf_response(compile_tex(render_letter(body), "cover_letter", "Lettre"),
-                        "cover_letter_generated.pdf")
+                        "cover_letter_generated.pdf", output)

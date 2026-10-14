@@ -3,195 +3,20 @@
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "seconds",
-              "secondsInterval": 15
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.4,
-      "position": [
-        96,
-        16
-      ],
-      "id": "schedule-trigger",
-      "name": "Schedule Trigger"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://claude-bridge:8080/lock?key=claude",
+        "httpMethod": "POST",
+        "path": "cv-claude",
+        "responseMode": "responseNode",
         "options": {}
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        320,
-        16
-      ],
-      "id": "acquire-lock",
-      "name": "Acquire Lock"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Another offer is still being processed: stop here, Telegram keeps the message for later\nreturn $json.acquired ? [{ json: {} }] : [];"
-      },
-      "type": "n8n-nodes-base.code",
+      "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        540,
-        16
+        0,
+        0
       ],
-      "id": "check-lock",
-      "name": "Lock Acquired?"
-    },
-    {
-      "parameters": {
-        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates",
-        "options": {},
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "timeout",
-              "value": "0"
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        760,
-        16
-      ],
-      "id": "telegram-updates",
-      "name": "Get Telegram Updates"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Take ONE offer per run. Everything up to it (short messages included) gets confirmed to Telegram.\nconst updates = $input.first().json.result || [];\nconst offer = updates.find(u => (u.message?.text || '').trim().length > 20);\nconst lastId = offer ? offer.update_id : Math.max(-1, ...updates.map(u => u.update_id));\nreturn [{ json: { hasOffer: !!offer, confirmOffset: lastId + 1, message: offer?.message || null } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        980,
-        16
-      ],
-      "id": "pick-offer",
-      "name": "Pick Next Offer"
-    },
-    {
-      "parameters": {
-        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates",
-        "options": {},
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "offset",
-              "value": "={{ $json.confirmOffset }}"
-            },
-            {
-              "name": "limit",
-              "value": "1"
-            },
-            {
-              "name": "timeout",
-              "value": "0"
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        1200,
-        16
-      ],
-      "id": "confirm-updates",
-      "name": "Confirm Updates"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "has-offer-cond",
-              "leftValue": "={{ $('Pick Next Offer').first().json.hasOffer }}",
-              "rightValue": "",
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        1420,
-        16
-      ],
-      "id": "has-offer",
-      "name": "Has Offer?"
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{ json: { message: $('Pick Next Offer').first().json.message } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1640,
-        -80
-      ],
-      "id": "offer-message",
-      "name": "Get Offer Message"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://claude-bridge:8080/unlock?key=claude",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        1640,
-        112
-      ],
-      "id": "release-lock-idle",
-      "name": "Release Lock (no offer)"
-    },
-    {
-      "parameters": {
-        "operation": "sendMessage",
-        "chatId": "={{ $json.message.chat.id }}",
-        "text": "Je traite cette offre...",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        1860,
-        -80
-      ],
-      "id": "acknowledge-message",
-      "name": "Acknowledge Message"
+      "id": "webhook-claude",
+      "name": "Webhook",
+      "webhookId": "fad7c2ff-2e7a-55f7-aa5e-2712d70e9428"
     },
     {
       "parameters": {
@@ -199,14 +24,14 @@
         "url": "http://claude-bridge:8080/prompts",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ engine: 'claude', chatId: $json.message.chat.id, jobOffer: $json.message.text }) }}",
+        "jsonBody": "={{ JSON.stringify({ engine: 'claude', jobOffer: $json.body.jobOffer, tailoring: $json.body.tailoring }) }}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        1860,
-        272
+        220,
+        0
       ],
       "id": "build-prompts",
       "name": "Build Prompts",
@@ -228,8 +53,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        2100,
-        272
+        440,
+        0
       ],
       "id": "claude-resume",
       "name": "Claude - Resume JSON",
@@ -237,14 +62,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Works with Claude (bridge), Gemini and Ollama (local) responses\nconst res = $json;\nif (res.stop_reason === 'max_tokens' || res.finishReason === 'MAX_TOKENS' || res.done_reason === 'length') throw new Error('Model hit its max output tokens.');\n\nlet text = Array.isArray(res.content)\n  ? res.content.filter(b => b.type === 'text').map(b => b.text).join('')\n  : (res.content?.parts || []).map(p => p.text || '').join('') || res.message?.content || res.text || '';\ntext = text.replace(/```(?:json)?/gi, '').trim();\nconst match = text.match(/\\{[\\s\\S]*\\}/);\nif (!match) throw new Error('Model did not return JSON: ' + text.slice(0, 300));\nconst data = JSON.parse(match[0]);\n\n// Escape LaTeX special characters in every string value\nconst map = {\n  '\\\\': '\\\\textbackslash{}', '&': '\\\\&', '%': '\\\\%', '$': '\\\\$',\n  '#': '\\\\#', '_': '\\\\_', '{': '\\\\{', '}': '\\\\}',\n  '~': '\\\\textasciitilde{}', '^': '\\\\textasciicircum{}',\n};\nconst esc = s => s.replace(/[\\\\&%$#_{}~^]/g, c => map[c]);\nconst walk = v =>\n  typeof v === 'string' ? esc(v)\n  : Array.isArray(v) ? v.map(walk)\n  : v && typeof v === 'object'\n    ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))\n    : v;\n\ndata.PROFILE_SUMMARY = data.PROFILE_SUMMARY || data.summary || data.basics?.summary || '';\n\n// Plain-text keyword report sent to Telegram after the PDFs\nconst matched = data.ATS_MATCHED || [], missing = data.ATS_MISSING || [], added = data.ATS_ADDED || [];\nconst report = [\n  `ATS keywords covered: ${matched.length}/${matched.length + missing.length}`,\n  missing.length ? `Not in your profile: ${missing.join(', ')}` : 'Every keyword of the offer is covered.',\n  added.length ? `\\nAdded beyond your profile (prepare to talk about these in interviews):\\n- ${added.join('\\n- ')}` : ''\n].filter(Boolean).join('\\n');\n\nconst out = walk(data);\nout.ATS_REPORT = report;\nreturn { json: out };",
+        "jsCode": "// Works with Claude (bridge), Gemini and Ollama (local) responses\nconst res = $json;\nif (res.stop_reason === 'max_tokens' || res.finishReason === 'MAX_TOKENS' || res.done_reason === 'length') throw new Error('Model hit its max output tokens.');\n\nlet text = Array.isArray(res.content)\n  ? res.content.filter(b => b.type === 'text').map(b => b.text).join('')\n  : (res.content?.parts || []).map(p => p.text || '').join('') || res.message?.content || res.text || '';\ntext = text.replace(/```(?:json)?/gi, '').trim();\nconst match = text.match(/\\{[\\s\\S]*\\}/);\nif (!match) throw new Error('Model did not return JSON: ' + text.slice(0, 300));\nconst data = JSON.parse(match[0]);\n\n// Escape LaTeX special characters in every string value\nconst map = {\n  '\\\\': '\\\\textbackslash{}', '&': '\\\\&', '%': '\\\\%', '$': '\\\\$',\n  '#': '\\\\#', '_': '\\\\_', '{': '\\\\{', '}': '\\\\}',\n  '~': '\\\\textasciitilde{}', '^': '\\\\textasciicircum{}',\n};\nconst esc = s => s.replace(/[\\\\&%$#_{}~^]/g, c => map[c]);\nconst walk = v =>\n  typeof v === 'string' ? esc(v)\n  : Array.isArray(v) ? v.map(walk)\n  : v && typeof v === 'object'\n    ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))\n    : v;\n\ndata.PROFILE_SUMMARY = data.PROFILE_SUMMARY || data.summary || data.basics?.summary || '';\n\n// Plain-text keyword report shown on the web page\nconst matched = data.ATS_MATCHED || [], missing = data.ATS_MISSING || [], added = data.ATS_ADDED || [];\nconst report = [\n  `ATS keywords covered: ${matched.length}/${matched.length + missing.length}`,\n  missing.length ? `Not in your profile: ${missing.join(', ')}` : 'Every keyword of the offer is covered.',\n  added.length ? `\\nAdded beyond your profile (prepare to talk about these in interviews):\\n- ${added.join('\\n- ')}` : ''\n].filter(Boolean).join('\\n');\n\nconst out = walk(data);\nout.ATS_REPORT = report;\nreturn { json: out };",
         "mode": "runOnceForEachItem"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2340,
-        272
+        660,
+        0
       ],
       "id": "parse-resume",
       "name": "Parse Resume JSON",
@@ -253,46 +78,22 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://xelatex-api:8000/compile-resume",
+        "url": "http://xelatex-api:8000/compile-resume?output=base64",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file",
-              "outputPropertyName": "data"
-            }
-          },
           "timeout": 300000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        2580,
-        272
+        880,
+        0
       ],
       "id": "compile-resume",
       "name": "Compile Resume PDF",
-      "onError": "continueErrorOutput"
-    },
-    {
-      "parameters": {
-        "operation": "sendDocument",
-        "chatId": "={{ $('Build Prompts').item.json.chatId }}",
-        "binaryData": true,
-        "binaryPropertyName": "data",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2820,
-        272
-      ],
-      "id": "send-resume",
-      "name": "Send Resume PDF",
       "onError": "continueErrorOutput"
     },
     {
@@ -309,8 +110,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        3060,
-        272
+        1100,
+        0
       ],
       "id": "claude-letter",
       "name": "Claude - Cover Letter JSON",
@@ -324,8 +125,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3300,
-        272
+        1320,
+        0
       ],
       "id": "parse-letter",
       "name": "Parse Cover Letter JSON",
@@ -334,25 +135,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://xelatex-api:8000/compile-cover-letter",
+        "url": "http://xelatex-api:8000/compile-cover-letter?output=base64",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file",
-              "outputPropertyName": "data"
-            }
-          },
           "timeout": 300000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        3540,
-        272
+        1540,
+        0
       ],
       "id": "compile-letter",
       "name": "Compile Cover Letter PDF",
@@ -360,103 +155,42 @@
     },
     {
       "parameters": {
-        "operation": "sendDocument",
-        "chatId": "={{ $('Build Prompts').item.json.chatId }}",
-        "binaryData": true,
-        "binaryPropertyName": "data",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        3780,
-        272
-      ],
-      "id": "send-letter",
-      "name": "Send Cover Letter PDF",
-      "onError": "continueErrorOutput"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://claude-bridge:8080/unlock?key=claude",
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, engine: 'claude', resumePdf: $('Compile Resume PDF').item.json.pdf, letterPdf: $json.pdf, atsReport: $('Parse Resume JSON').item.json.ATS_REPORT, headline: $('Parse Resume JSON').item.json.HEADLINE, company: $('Parse Cover Letter JSON').item.json.COMPANY_NAME, jobTitle: $('Parse Cover Letter JSON').item.json.JOB_TITLE }) }}",
         "options": {}
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
       "position": [
-        4020,
-        272
+        1760,
+        0
       ],
-      "id": "release-lock",
-      "name": "Release Lock"
+      "id": "respond-ok",
+      "name": "Respond"
     },
     {
       "parameters": {
-        "operation": "sendMessage",
-        "chatId": "={{ $('Build Prompts').item.json.chatId }}",
-        "text": "={{ $json.ATS_REPORT }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2580,
-        480
-      ],
-      "id": "send-ats-report",
-      "name": "Send ATS Report"
-    },
-    {
-      "parameters": {
-        "operation": "sendMessage",
-        "chatId": "={{ $('Get Offer Message').first().json.message.chat.id }}",
-        "text": "={{ '❌ Generation failed at \"' + $prevNode.name + '\": ' + String((typeof $json.error === 'string' ? $json.error : ($json.error?.message || $json.message)) || 'unknown error').slice(0, 300) + '\\nSend the offer again to retry.' }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2580,
-        720
-      ],
-      "id": "notify-failure",
-      "name": "Notify Failure"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://claude-bridge:8080/unlock?key=claude",
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, step: $prevNode.name, error: String((typeof $json.error === 'string' ? $json.error : ($json.error?.message || $json.message)) || 'unknown error').slice(0, 500) }) }}",
         "options": {}
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
       "position": [
-        2800,
-        720
+        1200,
+        260
       ],
-      "id": "release-lock-failed",
-      "name": "Release Lock (failed)"
+      "id": "respond-error",
+      "name": "Respond Error"
     }
   ],
   "pinData": {},
   "connections": {
-    "Schedule Trigger": {
+    "Webhook": {
       "main": [
         [
           {
-            "node": "Acquire Lock",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Telegram Updates": {
-      "main": [
-        [
-          {
-            "node": "Pick Next Offer",
+            "node": "Build Prompts",
             "type": "main",
             "index": 0
           }
@@ -474,7 +208,7 @@
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -492,7 +226,7 @@
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -506,16 +240,11 @@
             "node": "Compile Resume PDF",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Send ATS Report",
-            "type": "main",
-            "index": 0
           }
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -526,24 +255,6 @@
       "main": [
         [
           {
-            "node": "Send Resume PDF",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Notify Failure",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Resume PDF": {
-      "main": [
-        [
-          {
             "node": "Claude - Cover Letter JSON",
             "type": "main",
             "index": 0
@@ -551,7 +262,7 @@
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -569,7 +280,7 @@
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -587,7 +298,7 @@
         ],
         [
           {
-            "node": "Notify Failure",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -598,121 +309,14 @@
       "main": [
         [
           {
-            "node": "Send Cover Letter PDF",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Notify Failure",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Acquire Lock": {
-      "main": [
-        [
-          {
-            "node": "Lock Acquired?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Lock Acquired?": {
-      "main": [
-        [
-          {
-            "node": "Get Telegram Updates",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Pick Next Offer": {
-      "main": [
-        [
-          {
-            "node": "Confirm Updates",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Confirm Updates": {
-      "main": [
-        [
-          {
-            "node": "Has Offer?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Offer?": {
-      "main": [
-        [
-          {
-            "node": "Get Offer Message",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Release Lock (no offer)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Offer Message": {
-      "main": [
-        [
-          {
-            "node": "Acknowledge Message",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Build Prompts",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Cover Letter PDF": {
-      "main": [
-        [
-          {
-            "node": "Release Lock",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Notify Failure",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Notify Failure": {
-      "main": [
-        [
-          {
-            "node": "Release Lock (failed)",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }

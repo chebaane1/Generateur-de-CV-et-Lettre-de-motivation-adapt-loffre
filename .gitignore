@@ -5,3 +5,4 @@ n8n_data/
 __pycache__/
 *.pyc
 .vscode/
+web/engines.json
