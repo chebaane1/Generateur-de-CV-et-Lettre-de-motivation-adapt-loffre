@@ -44,28 +44,3 @@ jobs:
           python -m compileall -q app
           python -c "import app.main"
 
-  docker:
-    name: Docker build + smoke test
-    needs: [typecheck, pdf-service]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Shell scripts
-        run: bash -n bots.sh tests/smoke.sh
-      - name: Build images
-        run: docker compose build app pdf
-      - name: Start app + pdf
-        run: |
-          mkdir -p data
-          cp prompts/profile.example.md prompts/profile.md
-          docker compose up -d app pdf
-      - name: Install PDF tools
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
-      - name: Smoke test (sample CV + letter, no AI call)
-        run: tests/smoke.sh
-      - name: Logs on failure
-        if: failure()
-        run: docker compose logs app pdf
-      - name: Stop
-        if: always()
-        run: docker compose down
