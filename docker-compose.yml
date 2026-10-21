@@ -18,7 +18,7 @@ services:
     volumes:
       - ./prompts:/prompts:ro   # your profile + prompts: edits apply on the next offer
       - ./app/web:/app/web:ro   # the page: edits apply on refresh
-      - ./data:/data:ro         # engines chosen with ./bots.sh
+      - ./data:/data            # cv.db (all your CVs) + engines chosen with ./bots.sh
     depends_on:
       - pdf
 

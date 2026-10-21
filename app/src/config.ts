@@ -11,6 +11,7 @@ export const PROMPTS_FILE = env.PROMPTS_FILE || '/prompts/prompts.ts';
 export const PROFILE_FILE = env.PROFILE_FILE || '/prompts/profile.md';
 export const WEB_DIR = env.WEB_DIR || '/app/web';
 export const DATA_DIR = env.DATA_DIR || '/data';        // bots.sh writes engines.json here
+export const DB_FILE = env.DB_FILE || `${DATA_DIR}/cv.db`;   // SQLite: all past generations
 
 // Other containers
 export const PDF_URL = env.PDF_URL || 'http://pdf:8000';

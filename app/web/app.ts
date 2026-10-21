@@ -5,6 +5,7 @@ type Tab = 'cv' | 'letter' | 'ats';
 type Content = Record<string, any>;
 
 interface Entry {
+  id?: number;                // row in data/cv.db
   engine: Engine;
   date: number;
   resumePdf: string;          // base64
@@ -18,8 +19,8 @@ interface Entry {
 }
 
 const ENGINE_NAMES: Record<Engine, string> = { claude: 'Claude (Pro plan)', gemini: 'Gemini', local: 'Local model (slow)' };
-const HISTORY_KEY = 'cv-history';
-const MAX_HISTORY = 10;
+const OLD_HISTORY_KEY = 'cv-history';   // where older versions kept the history, in the browser
+const HISTORY_SHOWN = 10;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 let current: Entry | null = null;
@@ -30,18 +31,7 @@ let urls: Partial<Record<Tab, string>> = {};
 const plain = (s: unknown) => String(s || '').replace(/\\textbackslash\{\}/g, '\\').replace(/\\textasciitilde\{\}/g, '~')
   .replace(/\\textasciicircum\{\}/g, '^').replace(/\\([&%$#_{}])/g, '$1');
 
-// ---- browser storage (may be unavailable: private window, blocked storage) ----
-const store = {
-  get(): Entry[] {
-    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
-  },
-  set(list: Entry[]) {
-    // PDFs are big: drop the oldest entries until it fits
-    for (let l = list.slice(0, MAX_HISTORY); l.length; l.pop()) {
-      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(l)); return; } catch { /* too big, drop one */ }
-    }
-  }
-};
+// ---- preferences in the browser (may be unavailable: private window, blocked storage) ----
 const getPref = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const setPref = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 
@@ -107,20 +97,48 @@ function setTab(t: Tab) {
   }
 }
 
-function renderHistory() {
-  const list = store.get();
+// ---- history: from the database (data/cv.db) ----
+interface Summary { id: number; createdAt: string; engine: Engine; company: string; jobTitle: string }
+
+async function renderHistory() {
+  let list: Summary[] = [];
+  try { list = (await (await fetch('/api/history')).json()).items || []; } catch { /* server down */ }
   const ul = $('history');
   ul.innerHTML = list.length ? '' : '<li style="cursor:default"><small>Nothing yet</small></li>';
-  list.forEach(e => {
+  list.slice(0, HISTORY_SHOWN).forEach(e => {
     const li = document.createElement('li');
     const title = document.createElement('span');
     const meta = document.createElement('small');
     title.textContent = `${plain(e.company) || '—'} · ${plain(e.jobTitle) || ''}`;
-    meta.textContent = `${e.engine} · ${new Date(e.date).toLocaleDateString()}`;
+    meta.textContent = `${e.engine} · ${new Date(e.createdAt).toLocaleDateString()}`;
     li.append(title, meta);
-    li.onclick = () => show(e);
+    li.onclick = () => openGeneration(e.id);
     ul.appendChild(li);
   });
+}
+
+/** Load a past generation (PDFs + content) and show it */
+async function openGeneration(id: number) {
+  try {
+    const g = await (await fetch(`/api/generations/${id}`)).json();
+    if (!g.ok) throw new Error(g.error || 'not found');
+    show({ ...g, date: Date.parse(g.createdAt) });
+  } catch (e) {
+    setStatus('❌ ' + (e instanceof Error ? e.message : String(e)), 'err');
+  }
+}
+
+/** Older versions kept the history in this browser: move it into the database once, then clear it here */
+async function importBrowserHistory() {
+  let entries: Entry[] = [];
+  try { entries = JSON.parse(localStorage.getItem(OLD_HISTORY_KEY) || '[]'); } catch { return; }
+  if (!entries.length) return;
+  try {
+    const res = await postJson<{ ok: boolean; imported: number; skipped: number }>('/api/import', { entries });
+    if (!res.ok) return;
+    try { localStorage.removeItem(OLD_HISTORY_KEY); } catch { /* ignore */ }
+    if (res.imported) setStatus(`Imported ${res.imported} CV(s) from this browser into the database.`, 'ok');
+  } catch { /* try again next time */ }
 }
 
 // ---- generate ----
@@ -138,9 +156,8 @@ async function generate() {
   try {
     const res = await postJson<any>('/api/generate', { engine, tailoring, jobOffer });
     if (!res.ok) throw new Error((res.step ? `${res.step}: ` : '') + (res.error || 'generation failed'));
-    const entry: Entry = { ...res, engine, date: Date.now() };
+    const entry: Entry = { ...res, engine, date: Date.now() };   // res.id: saved in the database
     show(entry);
-    store.set([entry, ...store.get()]);
     renderHistory();
     setStatus(`Done in ${seconds()}s.`, 'ok');
   } catch (e) {
@@ -205,14 +222,13 @@ async function saveEditor(ev: Event) {
   $<HTMLButtonElement>('saveBtn').disabled = true;
   setStatus('Rebuilding the PDF…');
   try {
-    const res = await postJson<{ ok: boolean; pdf?: string; error?: string }>('/api/compile', { kind: key, content });
+    const res = await postJson<{ ok: boolean; pdf?: string; error?: string }>('/api/compile', { kind: key, content, id: current.id });
     if (!res.ok || !res.pdf) throw new Error(res.error || 'compile failed');
     const entry = current;
     entry[key] = content;
     if (key === 'resume') { entry.resumePdf = res.pdf; entry.headline = content.HEADLINE; }
     else { entry.letterPdf = res.pdf; entry.company = content.COMPANY_NAME; entry.jobTitle = content.JOB_TITLE; }
-    store.set(store.get().map(e => (e.date === entry.date ? entry : e)));   // keep the edit in the history
-    renderHistory();
+    renderHistory();                                                       // the server saved the edit
     show(entry, tab);
     setStatus('PDF updated.', 'ok');
   } catch (e) {
@@ -231,4 +247,11 @@ $<HTMLFormElement>('editor').onsubmit = saveEditor;
 document.querySelectorAll<HTMLButtonElement>('.tabs button[data-tab]')
   .forEach(b => (b.onclick = () => setTab(b.dataset.tab as Tab)));
 loadEngines();
-renderHistory();
+importBrowserHistory().then(renderHistory);
+// "Open" in the All CVs popup (all-cvs.ts)
+window.addEventListener('open-generation', ev => openGeneration((ev as CustomEvent<number>).detail));
+// /?id=12 also opens a past generation
+const openId = Number(new URLSearchParams(location.search).get('id'));
+if (openId) openGeneration(openId);
+
+export {};   // each page script is its own module (loaded with type="module")

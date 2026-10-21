@@ -24,6 +24,7 @@
 - **Your GitHub, matched** — the 2–3 public repos most relevant to the offer, linked on the CV
 - **Stack at a glance** — every technology is printed in bold
 - **Edit before download** — fix any line in the page, the PDF is rebuilt in seconds, no AI call
+- **Every CV kept** — saved in a local SQLite database, browsable in a table, exportable to CSV
 - **Three engines** — Claude (Pro plan), Gemini (free tier) or a local open-source model
 - **Private** — runs on your machine, listens on `localhost` only
 
@@ -92,7 +93,7 @@ docker-compose build
 ./bots.sh all
 ```
 
-Open **http://localhost:8080**, paste an offer, click **Generate**.
+Open **http://localhost:8080**, paste an offer, click **Generate**. Past CVs: **All CVs →** on the page.
 
 <details>
 <summary>Getting a Claude Code token (Pro plan)</summary>
@@ -135,6 +136,7 @@ The page only offers the engines you launched. `ollama` runs only with `local`.
 | `prompts/profile.md` | **You**: contact block + your profile in plain text | next offer |
 | `prompts/prompts.ts` | Prompts and settings: default mode, headline, GitHub user, models | next offer |
 | `.env` | Keys and models: `CLAUDE_CODE_OAUTH_TOKEN`, `GEMINI_API_KEY`, `OLLAMA_MODEL`… | `docker-compose up -d` |
+| `data/cv.db` | Every generation: offer, content, PDFs, ATS report (SQLite, written by the app) | — |
 
 `profile.md` starts with a contact block, printed as-is on both documents — the AI never rewrites it:
 
@@ -151,7 +153,7 @@ linkedin: linkedin.com/in/janedoe
 Your experience, skills and education in plain text…
 ```
 
-`profile.md` and `.env` are git-ignored.
+`profile.md`, `.env` and `data/` are git-ignored.
 
 ## Project structure
 
@@ -159,9 +161,10 @@ Your experience, skills and education in plain text…
 ├── bots.sh               launcher: choose the engines
 ├── docker-compose.yml
 ├── prompts/              your profile + the prompts (live-reloaded)
+├── data/                 cv.db (SQLite: all your CVs), engines.json
 ├── app/                  TypeScript
-│   ├── src/              server, pipeline, engines/ (claude, gemini, ollama)
-│   └── web/              the page (index.html + app.ts, compiled on the fly)
+│   ├── src/              server, pipeline, db (SQLite), engines/ (claude, gemini, ollama)
+│   └── web/              the page + All CVs popup (HTML + TypeScript, compiled on the fly)
 └── pdf/                  Python
     └── app/              FastAPI routes, CV layout, letter layout, LaTeX
 ```

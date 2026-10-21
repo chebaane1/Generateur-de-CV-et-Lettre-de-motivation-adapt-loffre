@@ -43,6 +43,7 @@ export type Runner = (args: RunArgs) => Promise<string>;
 export type GenerateResult =
   | {
       ok: true;
+      id?: number;            // row in data/cv.db, set once saved
       engine: Engine;
       resumePdf: string;      // base64
       letterPdf: string;      // base64

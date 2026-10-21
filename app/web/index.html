@@ -43,6 +43,34 @@
   .edit-bar { display:flex; gap:8px; position:sticky; bottom:0; background:var(--card); padding:10px 0 2px; }
   .edit-bar .primary { width:auto; margin:0; }
   .history small { color:var(--muted); white-space:nowrap; }
+  .history label { display:flex; justify-content:space-between; }
+  button.all { border:0; background:none; padding:0; color:var(--accent); font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+
+  /* ---- popups: "All CVs", and the PDF preview on top of it ---- */
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); padding:0; }
+  dialog::backdrop { background:rgba(10,12,16,.55); }
+  .dlg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .dlg-head h2 { font-size:17px; margin:0 auto 0 0; }
+  .dlg-head input { width:240px; max-width:100%; padding:7px 10px; }
+  .dlg-head a, .dlg-head button { font-size:14px; text-decoration:none; }
+  .x { border:0; background:none; font-size:20px; line-height:1; color:var(--muted); cursor:pointer; padding:2px 6px; }
+  #allDialog { width:min(1200px, 96vw); height:min(820px, 90vh); }
+  #allDialog[open] { display:flex; flex-direction:column; }
+  .table-wrap { overflow:auto; flex:1; }
+  #allDialog table { border-collapse:collapse; width:100%; white-space:nowrap; font-size:14px; }
+  #allDialog th, #allDialog td { padding:8px 12px; border-bottom:1px solid var(--line); text-align:left; }
+  #allDialog th { position:sticky; top:0; background:var(--card); font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  #allDialog th[data-sort] { cursor:pointer; user-select:none; }
+  #allDialog th[data-sort]:hover { color:var(--text); }
+  #allDialog tbody tr:nth-child(even) { background:var(--bg); }
+  #allDialog td.wide { white-space:normal; min-width:200px; }
+  #allDialog td button { border:0; background:none; padding:0; color:var(--accent); font:inherit; cursor:pointer; }
+  #allDialog td button.del { color:var(--muted); }
+  #allDialog td button.del:hover { color:var(--err); }
+  .dlg-foot { padding:8px 16px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); }
+  #pdfDialog { width:min(900px, 94vw); height:92vh; }
+  #pdfDialog[open] { display:flex; flex-direction:column; }
+  #pdfDialog iframe { flex:1; height:auto; border:0; border-radius:0 0 12px 12px; }
 </style>
 </head>
 <body>
@@ -70,7 +98,7 @@
       <div class="status" id="status"></div>
     </div>
     <div class="card history">
-      <label>History (this browser)</label>
+      <label>Recent <button type="button" class="all" id="allBtn">All CVs →</button></label>
       <ul id="history"></ul>
     </div>
   </section>
@@ -98,6 +126,48 @@
   </section>
 </main>
 
-<script src="/app.js"></script>
+
+<!-- All CVs (from data/cv.db) -->
+<dialog id="allDialog">
+  <div class="dlg-head">
+    <h2>All CVs</h2>
+    <input id="allSearch" type="search" placeholder="Search company, job title, engine…">
+    <a class="dl" href="/api/history.csv">Export CSV</a>
+    <button class="x" data-close title="Close">✕</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="createdAt">Date</th>
+          <th data-sort="company">Company</th>
+          <th data-sort="jobTitle">Job title</th>
+          <th data-sort="engine">Engine</th>
+          <th data-sort="tailoring">Mode</th>
+          <th data-sort="ats">ATS</th>
+          <th>CV</th>
+          <th>Letter</th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="allRows"></tbody>
+    </table>
+  </div>
+  <div class="dlg-foot" id="allCount"></div>
+</dialog>
+
+<!-- One PDF, on top of "All CVs" -->
+<dialog id="pdfDialog">
+  <div class="dlg-head">
+    <h2 id="pdfTitle"></h2>
+    <a class="dl" id="pdfDownload">Download</a>
+    <button class="x" data-close title="Close">✕</button>
+  </div>
+  <iframe id="pdfFrame" title="PDF preview"></iframe>
+</dialog>
+
+<script type="module" src="/app.js"></script>
+<script type="module" src="/all-cvs.js"></script>
 </body>
 </html>
