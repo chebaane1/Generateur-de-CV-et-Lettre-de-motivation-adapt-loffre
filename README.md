@@ -4,6 +4,7 @@
 
 **Paste a job offer. Get a one-page, ATS-ready CV and a cover letter — as PDFs.**
 
+[![CI](https://github.com/rayenamer/Generateur-de-CV-et-Lettre-de-motivation-adapt-loffre/actions/workflows/ci.yml/badge.svg)](https://github.com/rayenamer/Generateur-de-CV-et-Lettre-de-motivation-adapt-loffre/actions/workflows/ci.yml)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
 ![LaTeX](https://img.shields.io/badge/XeLaTeX-008080?logo=latex&logoColor=white)
@@ -165,6 +166,8 @@ Your experience, skills and education in plain text…
 ├── app/                  TypeScript
 │   ├── src/              server, pipeline, db (SQLite), engines/ (claude, gemini, ollama)
 │   └── web/              the page + All CVs popup (HTML + TypeScript, compiled on the fly)
+├── tests/                smoke.sh + sample CV / letter (fake data)
+├── .github/workflows/    CI
 └── pdf/                  Python
     └── app/              FastAPI routes, CV layout, letter layout, LaTeX
 ```
@@ -179,8 +182,11 @@ Your experience, skills and education in plain text…
 
 ```bash
 cd app && npm install && npm run typecheck    # also runs during the Docker build
+tests/smoke.sh                                 # sample CV + letter through the running app, no AI call
 docker-compose logs -f app                     # logs
 ```
+
+**CI** (GitHub Actions, on every push and pull request): TypeScript type check → Python import check → Docker build + `tests/smoke.sh`. No API keys needed.
 
 ## Resources
 

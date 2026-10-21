@@ -1,0 +1,46 @@
+{
+  "SECTION_LANG": "fr",
+  "HEADLINE": "Cherche un stage de fin d'études | AI Engineer | IA générative & RAG",
+  "personal_information": {
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "phone": "+33 6 00 00 00 00",
+    "github": "github.com/janedoe",
+    "linkedin": "linkedin.com/in/janedoe"
+  },
+  "PROFILE_SUMMARY": "Élève ingénieure spécialisée en IA générative et RAG (LangChain, FastAPI). Expérience en API Python, déploiement Docker/Kubernetes et évaluation de LLM. Recherche un stage de fin d'études en IA générative.",
+  "skills": {
+    "Langages & Frameworks": ["Python", "FastAPI", "Pydantic", "LangChain"],
+    "Cloud & IA": ["Azure OpenAI", "Azure AI Search", "Docker", "Kubernetes"],
+    "Patterns IA": ["RAG", "évaluation LLM", "prompt engineering"],
+    "Data": ["SQL", "PostgreSQL", "Pandas"]
+  },
+  "education": [
+    { "degree": "Cycle ingénieur en informatique", "institution": "École d'ingénieurs", "dates": "Sept. 2022 – Sept. 2027" }
+  ],
+  "experience": [
+    {
+      "title": "Stagiaire AI Engineer",
+      "company": "Example Corp",
+      "dates": "Juil. 2026 – Août 2026",
+      "responsibilities": [
+        "API FastAPI asynchrone + LangChain/Azure OpenAI pour la génération de rapports",
+        "Pipeline RAG (parsing, chunking, indexation) avec Azure AI Search & évaluation LLM"
+      ]
+    },
+    {
+      "title": "Développeuse Python",
+      "company": "Startup & Co",
+      "dates": "Janv. 2026 – Juin 2026",
+      "responsibilities": ["Microservices Python déployés sur Kubernetes, CI/CD et tests Pytest"]
+    }
+  ],
+  "PROJECTS": [
+    { "name": "DocAssistant — assistant RAG", "description": "Chatbot RAG FastAPI + LangChain sur une base documentaire", "url": "https://github.com/janedoe/docassistant" }
+  ],
+  "certifications": ["Azure AI Fundamentals"],
+  "TECH_KEYWORDS": ["Python", "FastAPI", "LangChain", "Azure OpenAI", "Azure AI Search", "Docker", "Kubernetes", "RAG", "Pytest"],
+  "ATS_MATCHED": ["RAG", "FastAPI"],
+  "ATS_MISSING": [],
+  "ATS_ADDED": []
+}
