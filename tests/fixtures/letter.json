@@ -1,0 +1,16 @@
+{
+  "personal_information": {
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "location": "Paris, France",
+    "github": "github.com/janedoe",
+    "linkedin": "linkedin.com/in/janedoe"
+  },
+  "COMPANY_NAME": "Example Corp",
+  "JOB_TITLE": "Stage de fin d'études - AI Engineer",
+  "RECIPIENT_NAME": "Madame, Monsieur",
+  "PARAGRAPH_HOOK": "Je vous adresse ma candidature pour le stage de fin d'études AI Engineer au sein d'Example Corp.",
+  "PARAGRAPH_VALUE": "J'ai conçu des pipelines RAG avec LangChain et FastAPI, déployés avec Docker et Kubernetes.",
+  "PARAGRAPH_ALIGNMENT": "Vos projets d'IA générative sur Azure correspondent exactement aux compétences que je souhaite approfondir.",
+  "PARAGRAPH_CTA": "Je serais ravie d'échanger avec vous lors d'un entretien."
+}

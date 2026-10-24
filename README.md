@@ -1,173 +1,204 @@
-# Générateur de CV et lettre de motivation (n8n + Gemini + Telegram + XeLaTeX)
+<div align="center">
 
-Ce projet est un workflow d'automatisation n8n conçu pour générer instantanément un **CV adapté** et une **lettre de motivation (méthode Harvard)** au format PDF à partir d'une simple offre d'emploi envoyée sur Telegram.
+# CV & Cover Letter Generator
+
+**Paste a job offer. Get a one-page, ATS-ready CV and a cover letter — as PDFs.**
+
+[![CI](https://github.com/rayenamer/Generateur-de-CV-et-Lettre-de-motivation-adapt-loffre/actions/workflows/ci.yml/badge.svg)](https://github.com/rayenamer/Generateur-de-CV-et-Lettre-de-motivation-adapt-loffre/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![LaTeX](https://img.shields.io/badge/XeLaTeX-008080?logo=latex&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-D97757?logo=anthropic&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-8E75B2?logo=googlegemini&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-000000?logo=ollama&logoColor=white)
+
+</div>
 
 ---
 
-## 🌟 Fonctionnalités
+## Features
 
-1. **Écoute Automatique (Polling Telegram) :** Vérifie régulièrement l'arrivée de nouvelles offres d'emploi ou de stage via un bot Telegram.
-2. **Analyse & Adaptation via AI (Google Gemini 1.5) :**
-   - **CV :** Adapte dynamiquement le profil, les compétences, les expériences et génère un projet sur-mesure parfaitement aligné avec l'offre (verbes d'action, métriques chiffrées, mots-clés techniques).
-   - **Lettre de Motivation :** Rédige une lettre synthétique, ultra-percutante et personnalisée selon les standards de la *Harvard Business School*.
-3. **Traitement JSON Robuste :** Nettoyage automatique des réponses de l'IA (suppression du Markdown, gestion des caractères Unicode invisibles).
-4. **Compilation PDF via API XeLaTeX :** Envoie des données structurées à un microservice XeLaTeX dédié pour compiler deux PDF au rendu professionnel.
-5. **Livraison Instantanée :** Envoi automatique des documents PDF générés directement dans le chat Telegram de l'utilisateur.
+- **Tailored to the offer** — headline, summary, skills and bullets rewritten with the offer's own keywords
+- **One page, always** — the layout picks the largest font that still fits exactly one page
+- **ATS report** — keywords covered, plus everything added beyond your real profile, to prepare interviews
+- **Your GitHub, matched** — the 2–3 public repos most relevant to the offer, linked on the CV
+- **Stack at a glance** — every technology is printed in bold
+- **Edit before download** — fix any line in the page, the PDF is rebuilt in seconds, no AI call
+- **Every CV kept** — saved in a local SQLite database, browsable in a table, exportable to CSV
+- **Three engines** — Claude (Pro plan), Gemini (free tier) or a local open-source model
+- **Private** — runs on your machine, listens on `localhost` only
 
----
+## How it works
 
-## 📐 Architecture du Workflow
+```mermaid
+flowchart LR
+    user(["Browser<br/>localhost:8080"])
+    profile[/"prompts/<br/>profile.md · prompts.ts"/]
+    github[("GitHub<br/>public repos")]
+    app["<b>app</b><br/>TypeScript<br/>web page · pipeline"]
+    engine{{"<b>AI engine</b><br/>Claude · Gemini · Ollama"}}
+    pdf["<b>pdf</b><br/>Python · XeLaTeX"]
 
-```
-[ Telegram ] 💬 (Offre reçue)
-      │
-      ▼
-[ n8n Schedule Trigger ] ──► [ Polling API Telegram ]
-      │
-      ▼
-[ Filtre & Code JS ] (Mise à jour de l'offset)
-      │
-  ┌───┴───────────────────────────┐
-  ▼                               ▼
-[ Message d'attente ]    [ Prompt Gemini 1.5 - CV ]
-                                  │
-                                  ▼
-                         [ Nettoyage JSON JS ]
-                                  │
-                                  ▼
-                         [ API XeLaTeX (CV) ]
-                                  │
-                                  ▼
-                         [ Envoi PDF CV (Telegram) ]
-                                  │
-                                  ▼
-                         [ Prompt Gemini 1.5 - Lettre ]
-                                  │
-                                  ▼
-                         [ Nettoyage JSON JS ]
-                                  │
-                                  ▼
-                         [ API XeLaTeX (Lettre) ]
-                                  │
-                                  ▼
-                         [ Envoi PDF Lettre (Telegram) ]
+    user <-->|"offer → CV · letter · report"| app
+    profile --> app
+    github -.->|projects| app
+    app <-->|"prompt → JSON"| engine
+    app <-->|"JSON → PDF"| pdf
 ```
 
----
+<details>
+<summary>One generation, step by step</summary>
 
-## 🛠️ Stack Technique
+```mermaid
+sequenceDiagram
+    actor You
+    participant App as app
+    participant AI as AI engine
+    participant PDF as pdf
 
-- **Orchestration :** [n8n](https://n8n.io/)
-- **Intelligence Artificielle :** Google Gemini API (`models/gemini-1.5-flash` / `gemini-1.5-pro`)
-- **Messagerie :** Telegram Bot API
-- **Génération PDF :** API REST basée sur **XeLaTeX** (Dockerized)
-- **Langage & Scripting :** JavaScript (Nodes Code n8n)
+    You->>App: job offer + engine + mode
+    Note over App: profile.md + prompts.ts<br/>+ matching GitHub repos
+    App->>AI: CV prompt
+    AI-->>App: CV as JSON
+    App->>PDF: compile CV
+    PDF-->>App: CV.pdf (exactly one page)
+    App->>AI: cover letter prompt
+    AI-->>App: letter as JSON
+    App->>PDF: compile letter
+    PDF-->>App: letter.pdf
+    App-->>You: preview · edit · download + ATS report
+```
 
----
+</details>
 
-## 📋 Prérequis
+| Service | Role |
+|---|---|
+| `app` | Web page, pipeline, engine calls — `http://localhost:8080` |
+| `pdf` | JSON → PDF with XeLaTeX, reachable only by `app` |
+| `ollama` | Local model (`qwen2.5:3b`), started only for the local engine |
 
-1. Une instance **n8n** en cours d'exécution.
-2. Un bot Telegram créé via [@BotFather](https://t.me/BotFather) avec un token configuré uniquement dans n8n.
-3. Une clé d'API **Google Gemini** configurée dans les credentials n8n.
-4. Le service **XeLaTeX API** accessible sur votre réseau local/Docker (ex: `http://xelatex-api:8000`).
+## Quick start
 
-> Le workflow fourni est un template public. Il ne contient aucun token, credential, profil candidat ou identifiant personnel.
-
----
-
-## 🚀 Installation & Configuration
-
-### 1. Préparer les informations du candidat
-
-Copiez `.env.example` vers `.env` :
+**Requirements:** Docker and docker-compose. At least one engine: a Claude Pro plan, a [Gemini API key](https://aistudio.google.com), or ~3 GB of free RAM for the local model.
 
 ```bash
-cp .env.example .env
+# 1. Configure
+cp .env.example .env                                # keys and models
+cp prompts/profile.example.md prompts/profile.md    # you: contact + profile
+
+# 2. Build
+docker-compose build
+
+# 3. Run with the engines you want
+./bots.sh all
 ```
 
-Sous PowerShell :
+Open **http://localhost:8080**, paste an offer, click **Generate**. Past CVs: **All CVs →** on the page.
 
-```powershell
-Copy-Item .env.example .env
-```
-
-Ouvrez `.env` et remplacez chaque valeur `YOUR_*` :
-
-| Variable | À remplacer par |
-| --- | --- |
-| `CV_NAME` | Nom affiché sur le CV et la lettre |
-| `CV_LOCATION` | Ville et pays affichés |
-| `CV_EMAIL` | Adresse e-mail professionnelle |
-| `CV_GITHUB` | URL GitHub, sans `https://` obligatoire |
-| `CV_LINKEDIN` | URL LinkedIn, sans `https://` obligatoire |
-| `CV_COMPANY_1`, `CV_COMPANY_2`, `CV_COMPANY_3` | Noms des expériences professionnelles |
-| `CV_PROJECT_URL` | URL d'un projet public |
-| `CV_SCHOOL` | Établissement de formation principal |
-| `CV_SECONDARY_SCHOOL` | Établissement secondaire, si nécessaire |
-| `CV_DISTINCTION` | Distinction ou prix à afficher |
-| `CV_COMMUNITY` | Association ou communauté technique |
-
-Le fichier `.env` est ignoré par Git et ne doit jamais être publié. Les descriptions détaillées des expériences, compétences et projets sont envoyées par le workflow n8n, pas par `.env`.
-
-### 2. Importer et personnaliser le workflow
-
-1. Importez [workflow.template.json](workflow.template.json) dans n8n via **Workflows** > **Import from File / JSON**.
-2. Dans le nœud **Get Telegram Updates**, remplacez `YOUR_TELEGRAM_BOT_TOKEN` par le token de votre bot.
-3. Dans les nœuds **Generate Resume JSON** et **Generate Cover Letter JSON**, remplacez `YOUR_CANDIDATE_PROFILE` par votre profil, vos expériences, vos compétences et vos projets.
-4. Faites ce remplacement dans les deux nœuds : le premier génère le CV, le second génère la lettre.
-5. Conservez uniquement des informations que vous avez le droit de transmettre à Google Gemini.
-
-Le workflow est désactivé par défaut (`active: false`). Testez-le manuellement dans n8n avant de l'activer.
-
-### 3. Configurer les credentials n8n
-
-Après l'import, associez vos propres credentials aux nœuds concernés :
-
-- Nœuds **Generate Resume JSON** et **Generate Cover Letter JSON** : credential Google Gemini.
-- Nœuds **Acknowledge Message**, **Send Resume PDF** et **Send Cover Letter PDF** : credential Telegram.
-
-Les credentials doivent être créés directement dans n8n. Ne les ajoutez pas au fichier JSON et ne les commitez jamais dans Git.
-
-### 4. Configurer l'API XeLaTeX
-
-Copiez `.env.example` vers `.env`, complétez-le, puis démarrez les services :
+<details>
+<summary>Getting a Claude Code token (Pro plan)</summary>
 
 ```bash
-docker compose up --build -d
+npm i -g @anthropic-ai/claude-code
+claude setup-token        # log in with your Pro account
 ```
 
-Assurez-vous que vos nœuds `HTTP Request` pointent vers les bons endpoints de compilation :
-- Compile CV : `http://xelatex-api:8000/compile-resume`
-- Compile Lettre : `http://xelatex-api:8000/compile-cover-letter`
+Put the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. Never set `ANTHROPIC_API_KEY`: that would bill API prices.
 
-Si n8n tourne hors de Docker, remplacez `http://xelatex-api:8000` par `http://localhost:8000` dans les deux nœuds HTTP Request.
+</details>
 
-### 5. Vérifier avant publication
+## Usage
 
-Avant de pousser le projet, vérifiez que :
+```bash
+./bots.sh claude            # one engine
+./bots.sh gemini local      # any combination
+./bots.sh all               # all three
+docker-compose down         # stop
+```
 
-- `.env` n'est pas suivi par Git (`git status` ne doit pas l'afficher).
-- Le JSON ne contient plus `YOUR_TELEGRAM_BOT_TOKEN` ni de token réel.
-- `YOUR_CANDIDATE_PROFILE` a été remplacé uniquement dans votre copie locale du workflow.
-- Aucun PDF, log, message Telegram ou clé API n'est présent dans le dépôt.
+The page only offers the engines you launched. `ollama` runs only with `local`.
 
+| Engine | Cost | Speed |
+|---|---|---|
+| Claude | included in Claude Pro | ~2 min per document |
+| Gemini | free tier | ~45 s for both |
+| Local | free, offline | several minutes on CPU |
+
+**Modes**, chosen per offer:
+
+- **Aggressive** — titles and tasks rewritten to match the offer. Companies, dates, education and certifications never change; no invented numbers.
+- **Strict** — only rephrases and reorders your real profile.
+
+## Configuration
+
+| File | What goes in it | Applies |
+|---|---|---|
+| `prompts/profile.md` | **You**: contact block + your profile in plain text | next offer |
+| `prompts/prompts.ts` | Prompts and settings: default mode, headline, GitHub user, models | next offer |
+| `.env` | Keys and models: `CLAUDE_CODE_OAUTH_TOKEN`, `GEMINI_API_KEY`, `OLLAMA_MODEL`… | `docker-compose up -d` |
+| `data/cv.db` | Every generation: offer, content, PDFs, ATS report (SQLite, written by the app) | — |
+
+`profile.md` starts with a contact block, printed as-is on both documents — the AI never rewrites it:
+
+```markdown
+---
+name: Jane Doe
+email: jane@example.com
+phone: +33 6 00 00 00 00      # remove a line to leave it out
+location: Paris, France
+github: github.com/janedoe
+linkedin: linkedin.com/in/janedoe
 ---
 
-## 📱 Utilisation
+Your experience, skills and education in plain text…
+```
 
-1. Envoyez un message contenant une **offre de stage ou d'emploi** (texte de plus de 20 caractères) à votre Bot Telegram.
-2. Le Bot répond immédiatement : `"je m'occupe de cette offre ! Tkika ..."`.
-3. Quelques secondes plus tard, vous recevrez successivement dans votre discussion :
-   - Your **CV optimisé** en format PDF.
-   - Votre **Lettre de Motivation** sur-mesure en format PDF.
+`profile.md`, `.env` and `data/` are git-ignored.
 
----
+## Project structure
 
-## Sécurité
+```
+├── bots.sh               launcher: choose the engines
+├── docker-compose.yml
+├── prompts/              your profile + the prompts (live-reloaded)
+├── data/                 cv.db (SQLite: all your CVs), engines.json
+├── app/                  TypeScript
+│   ├── src/              server, pipeline, db (SQLite), engines/ (claude, gemini, ollama)
+│   └── web/              the page + All CVs popup (HTML + TypeScript, compiled on the fly)
+├── tests/                smoke.sh + sample CV / letter (fake data)
+├── .github/workflows/    CI
+└── pdf/                  Python
+    └── app/              FastAPI routes, CV layout, letter layout, LaTeX
+```
 
-Ne placez jamais de token Telegram, clé Gemini, mot de passe ou offre d'emploi privée dans le dépôt. Si un secret a déjà été publié, révoquez-le puis nettoyez l'historique Git avant de rendre le dépôt public.
+## Development
 
-## Licence
+| Change | Then |
+|---|---|
+| `prompts/*`, `app/web/*` | nothing — next offer / page refresh |
+| `app/src/*` | `docker-compose up -d --build app` |
+| `pdf/app/*` | `docker-compose up -d --build pdf` |
 
-Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de détails.
+```bash
+cd app && npm install && npm run typecheck    # also runs during the Docker build
+tests/smoke.sh                                 # sample CV + letter through the running app, no AI call
+docker-compose logs -f app                     # logs
+```
+
+**CI** (GitHub Actions, on every push and pull request): TypeScript type check → Python import check → Docker build + `tests/smoke.sh`. No API keys needed.
+
+## Resources
+
+Idle: **~100–160 MB** for `app` + `pdf`. While generating: +200–400 MB with Claude, ~0 with Gemini, **+2.5 GB with the local model** (freed 15 min after the last offer).
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| *engine "x" is not launched* | `./bots.sh x` |
+| ❌ *Profile* | `prompts/profile.md` is missing, empty, or has no `name:` |
+| Gemini *503 / 429* | Google overloaded or daily quota used — the fallback model is tried automatically |
+| Claude *429* | Pro limit reached (shared with claude.ai) — wait, or use `haiku` in `prompts.ts` |
+| Local *model not found* | still downloading: `docker-compose logs -f ollama` |
+| `KeyError: 'ContainerConfig'` | `docker-compose down`, then `./bots.sh …` |

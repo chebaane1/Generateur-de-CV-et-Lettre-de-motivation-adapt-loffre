@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CV Generator</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#2f5bea; --ok:#16794c; --err:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161b; --card:#1d2027; --text:#e7e9ee; --muted:#9aa1ad; --line:#2d313a; --accent:#6d8dff; --ok:#4ccf8f; --err:#ff7a6e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1200px; margin:0 auto; padding:24px 16px; display:grid; grid-template-columns: 420px 1fr; gap:20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  label { display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:12px 0 6px; }
+  textarea, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+  textarea { height:300px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 12px; }
+  button.primary { width:100%; margin-top:14px; background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; padding:11px; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .status { margin-top:10px; font-size:13px; min-height:20px; }
+  .status.err { color:var(--err); } .status.ok { color:var(--ok); }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tabs button.active { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .tabs a { margin-left:auto; }
+  a.dl { color:var(--accent); text-decoration:none; font-size:14px; padding:8px 4px; }
+  iframe { width:100%; height:78vh; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .empty { color:var(--muted); text-align:center; padding:80px 20px; }
+  pre { white-space:pre-wrap; font:13px/1.5 ui-monospace, monospace; background:var(--bg); border-radius:8px; padding:10px; margin:10px 0 0; }
+  .history { margin-top:16px; }
+  .history ul { list-style:none; margin:0; padding:0; }
+  .history li { padding:7px 0; border-top:1px solid var(--line); font-size:13px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
+  .history li:hover { color:var(--accent); }
+  #editor { max-height:78vh; overflow:auto; padding-right:6px; }
+  #editor fieldset { border:1px solid var(--line); border-radius:8px; margin:10px 0; padding:4px 12px 10px; }
+  #editor legend { font-size:12px; font-weight:600; color:var(--muted); padding:0 4px; }
+  #editor textarea { height:auto; min-height:38px; }
+  .edit-bar { display:flex; gap:8px; position:sticky; bottom:0; background:var(--card); padding:10px 0 2px; }
+  .edit-bar .primary { width:auto; margin:0; }
+  .history small { color:var(--muted); white-space:nowrap; }
+  .history label { display:flex; justify-content:space-between; }
+  button.all { border:0; background:none; padding:0; color:var(--accent); font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+
+  /* ---- popups: "All CVs", and the PDF preview on top of it ---- */
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); padding:0; }
+  dialog::backdrop { background:rgba(10,12,16,.55); }
+  .dlg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .dlg-head h2 { font-size:17px; margin:0 auto 0 0; }
+  .dlg-head input { width:240px; max-width:100%; padding:7px 10px; }
+  .dlg-head a, .dlg-head button { font-size:14px; text-decoration:none; }
+  .x { border:0; background:none; font-size:20px; line-height:1; color:var(--muted); cursor:pointer; padding:2px 6px; }
+  #allDialog { width:min(1200px, 96vw); height:min(820px, 90vh); }
+  #allDialog[open] { display:flex; flex-direction:column; }
+  .table-wrap { overflow:auto; flex:1; }
+  #allDialog table { border-collapse:collapse; width:100%; white-space:nowrap; font-size:14px; }
+  #allDialog th, #allDialog td { padding:8px 12px; border-bottom:1px solid var(--line); text-align:left; }
+  #allDialog th { position:sticky; top:0; background:var(--card); font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  #allDialog th[data-sort] { cursor:pointer; user-select:none; }
+  #allDialog th[data-sort]:hover { color:var(--text); }
+  #allDialog tbody tr:nth-child(even) { background:var(--bg); }
+  #allDialog td.wide { white-space:normal; min-width:200px; }
+  #allDialog td button { border:0; background:none; padding:0; color:var(--accent); font:inherit; cursor:pointer; }
+  #allDialog td button.del { color:var(--muted); }
+  #allDialog td button.del:hover { color:var(--err); }
+  .dlg-foot { padding:8px 16px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); }
+  #pdfDialog { width:min(900px, 94vw); height:92vh; }
+  #pdfDialog[open] { display:flex; flex-direction:column; }
+  #pdfDialog iframe { flex:1; height:auto; border:0; border-radius:0 0 12px 12px; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>CV & Cover Letter Generator</h1>
+    <p class="sub">Paste a job offer, get a tailored one-page CV and cover letter.</p>
+    <div class="card">
+      <label for="offer">Job offer</label>
+      <textarea id="offer" placeholder="Paste the full job offer here…"></textarea>
+      <div class="row">
+        <div>
+          <label for="engine">Engine</label>
+          <select id="engine"></select>
+        </div>
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="aggressive">Aggressive (rewrite to match)</option>
+            <option value="strict">Strict (only my real profile)</option>
+          </select>
+        </div>
+      </div>
+      <button class="primary" id="go">Generate</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="card history">
+      <label>Recent <button type="button" class="all" id="allBtn">All CVs →</button></label>
+      <ul id="history"></ul>
+    </div>
+  </section>
+
+  <section class="card" id="result">
+    <div class="empty" id="empty">Your CV and cover letter will appear here.</div>
+    <div id="view" hidden>
+      <div class="tabs">
+        <button data-tab="cv" class="active">CV</button>
+        <button data-tab="letter">Cover letter</button>
+        <button data-tab="ats">ATS report</button>
+        <a class="dl" id="dl">Download</a>
+        <button id="editBtn">Edit</button>
+      </div>
+      <iframe id="pdf" title="PDF preview"></iframe>
+      <form id="editor" hidden>
+        <div id="fields"></div>
+        <div class="edit-bar">
+          <button type="submit" class="primary" id="saveBtn">Update PDF</button>
+          <button type="button" id="cancelBtn">Cancel</button>
+        </div>
+      </form>
+      <pre id="ats" hidden></pre>
+    </div>
+  </section>
+</main>
+
+
+<!-- All CVs (from data/cv.db) -->
+<dialog id="allDialog">
+  <div class="dlg-head">
+    <h2>All CVs</h2>
+    <input id="allSearch" type="search" placeholder="Search company, job title, engine…">
+    <a class="dl" href="/api/history.csv">Export CSV</a>
+    <button class="x" data-close title="Close">✕</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="createdAt">Date</th>
+          <th data-sort="company">Company</th>
+          <th data-sort="jobTitle">Job title</th>
+          <th data-sort="engine">Engine</th>
+          <th data-sort="tailoring">Mode</th>
+          <th data-sort="ats">ATS</th>
+          <th>CV</th>
+          <th>Letter</th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="allRows"></tbody>
+    </table>
+  </div>
+  <div class="dlg-foot" id="allCount"></div>
+</dialog>
+
+<!-- One PDF, on top of "All CVs" -->
+<dialog id="pdfDialog">
+  <div class="dlg-head">
+    <h2 id="pdfTitle"></h2>
+    <a class="dl" id="pdfDownload">Download</a>
+    <button class="x" data-close title="Close">✕</button>
+  </div>
+  <iframe id="pdfFrame" title="PDF preview"></iframe>
+</dialog>
+
+<script type="module" src="/app.js"></script>
+<script type="module" src="/all-cvs.js"></script>
+</body>
+</html>

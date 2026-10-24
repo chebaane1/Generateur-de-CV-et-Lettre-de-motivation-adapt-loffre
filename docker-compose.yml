@@ -1,26 +1,46 @@
+# Start with ./bots.sh (choose the engines), then open http://localhost:8080
 services:
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: n8n
-    restart: always
-    ports:
-      - "5678:5678"
+  # Web page + pipeline (TypeScript): job offer -> AI -> PDF service
+  app:
+    build: ./app
+    container_name: cv-app
+    restart: unless-stopped
     environment:
-      - N8N_HOST=localhost
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-    volumes:
-      - n8n_data:/home/node/.n8n
-
-  xelatex-api:
-    build: .
-    container_name: xelatex-api
-    restart: always
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - CLAUDE_MODEL=sonnet
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
+      - GEMINI_FALLBACK_MODEL=${GEMINI_FALLBACK_MODEL:-gemini-3.1-flash-lite}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
+      - "127.0.0.1:8080:8080"   # this PC only
+    volumes:
+      - ./prompts:/prompts:ro   # your profile + prompts: edits apply on the next offer
+      - ./app/web:/app/web:ro   # the page: edits apply on refresh
+      - ./data:/data            # cv.db (all your CVs) + engines chosen with ./bots.sh
+    depends_on:
+      - pdf
+
+  # PDF service (Python + XeLaTeX): JSON in, PDF out
+  pdf:
+    build: ./pdf
+    container_name: cv-pdf
+    restart: unless-stopped
+
+  # Local open-source model (no account, no API key). Pulls OLLAMA_MODEL on first start.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cv-ollama
+    restart: unless-stopped
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=15m
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull $${OLLAMA_MODEL} && wait"]
+    volumes:
+      - ollama_data:/root/.ollama
 
 volumes:
-  n8n_data:
-    external: true
+  ollama_data:
